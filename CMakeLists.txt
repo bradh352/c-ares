@@ -43,6 +43,7 @@ OPTION (CARES_BUILD_TOOLS   "Build tools"                                       
 OPTION (CARES_SYMBOL_HIDING "Hide private symbols in shared libraries"                              OFF)
 OPTION (CARES_THREADS       "Build with thread-safety support"                                      ON)
 OPTION (CARES_COVERAGE      "Build for code coverage"                                               OFF)
+OPTION (CARES_CRYPTO        "Build with crypto support (needed for DoT)"                            OFF)
 SET    (CARES_RANDOM_FILE "/dev/urandom" CACHE STRING "Suitable File / Device Path for entropy, such as /dev/urandom")
 
 
@@ -688,6 +689,13 @@ IF (HAVE_ARPA_NAMESER_COMPAT_H)
 	SET (CARES_HAVE_ARPA_NAMESER_COMPAT_H 1)
 ENDIF()
 
+# Crypto support (needed for DoT)
+IF (CARES_CRYPTO)
+	FIND_PACKAGE(OpenSSL REQUIRED)
+	IF (OPENSSL_VERSION VERSION_LESS "3.0.0")
+		MESSAGE(FATAL_ERROR "OpenSSL v3 or higher required")
+	ENDIF()
+ENDIF()
 
 # Coverage
 IF (CARES_COVERAGE)
@@ -754,8 +762,6 @@ IF (CARES_BUILD_TESTS OR CARES_BUILD_CONTAINER_TESTS)
 	ENABLE_TESTING ()
 	ADD_SUBDIRECTORY (test)
 ENDIF ()
-
-
 
 
 # Export targets

@@ -118,6 +118,11 @@ AC_ARG_ENABLE(cares-threads,
   [ CARES_THREADS=${enableval} ],
   [ CARES_THREADS=yes ])
 
+AC_ARG_ENABLE(cares-crypto,
+  AS_HELP_STRING([--enable-cares-crypto], [Enable building of crypto support (needed for DoT)]),
+  [ CARES_CRYPTO=${enableval} ],
+  [ CARES_CRYPTO=no ])
+
 AC_ARG_WITH(random,
   AS_HELP_STRING([--with-random=FILE],
                  [read randomness from FILE (default=/dev/urandom)]),
@@ -763,6 +768,12 @@ if test "x$ac_cv_header_arpa_nameser_compa_h" = "xyes" ; then
   CARES_DEFINE_UNQUOTED([CARES_HAVE_ARPA_NAMESER_COMPA_H],[1])
 fi
 
+dnl ------------ CRYPTO --------------
+if test "${CARES_CRYPTO}" = "yes" ; then
+  PKG_CHECK_MODULES([openssl], [openssl >= 3.0.0], [ ],
+    [ AC_MSG_ERROR([OpenSSL v3.0.0 or higher not found]) ]
+  )
+fi
 
 dnl ------------ THREADING --------------
 
