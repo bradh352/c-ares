@@ -50,6 +50,7 @@ AC_PROG_EGREP
 AC_PROG_INSTALL
 AC_CANONICAL_HOST
 AX_COMPILER_VENDOR
+PKG_PROG_PKG_CONFIG
 
 AC_MSG_CHECKING([whether this is native windows])
 ac_cv_native_windows=no
