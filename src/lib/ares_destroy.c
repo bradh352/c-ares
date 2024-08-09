@@ -129,6 +129,10 @@ void ares_destroy(ares_channel_t *channel)
 
   ares__qcache_destroy(channel->qcache);
 
+#ifdef CARES_USE_CRYPTO
+  ares_crypto_ctx_destroy(channel->crypto_ctx);
+#endif
+
   ares__channel_threading_destroy(channel);
 
   ares_free(channel);

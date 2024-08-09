@@ -117,6 +117,7 @@ typedef struct ares_rand_state ares_rand_state;
 #include "record/ares_dns_private.h"
 #include "util/ares__iface_ips.h"
 #include "util/ares__threads.h"
+#include "crypto/ares_crypto.h"
 
 #ifndef HAVE_GETENV
 #  include "ares_getenv.h"
@@ -438,6 +439,9 @@ struct ares_channeldata {
    * exit. */
   ares_bool_t                         reinit_pending;
   ares__thread_t                     *reinit_thread;
+
+  /* Crypto subsystem state */
+  ares_crypto_ctx_t                  *crypto_ctx;
 
   /* Whether the system is up or not.  This is mainly to prevent deadlocks
    * and access violations during the cleanup process.  Some things like

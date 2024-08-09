@@ -771,9 +771,21 @@ fi
 
 dnl ------------ CRYPTO --------------
 if test "${CARES_CRYPTO}" = "yes" ; then
-  PKG_CHECK_MODULES([openssl], [openssl >= 3.0.0], [ ],
+  PKG_CHECK_MODULES([openssl], [openssl >= 3.0.0],
+    [  ],
     [ AC_MSG_ERROR([OpenSSL v3.0.0 or higher not found]) ]
   )
+
+  AC_DEFINE([CARES_USE_CRYPTO], 1, [Define to 1 to enable the c-ares cryptographic subsystem])
+  AC_DEFINE([CARES_CRYPTO_OPENSSL], 1, [Define to 1 to use OpenSSL for c-ares crypto])
+  CARES_CRYPTO_CPPFLAGS="${openssl_CFLAGS}"
+  CARES_CRYPTO_LIBS="${openssl_LIBS}"
+  if test "x$host_vendor" = "xapple" ; then
+    CARES_CRYPTO_LDFLAGS="-framework CoreFoundation -framework Security"
+  fi
+  AC_SUBST(CARES_CRYPTO_CPPFLAGS)
+  AC_SUBST(CARES_CRYPTO_LIBS)
+  AC_SUBST(CARES_CRYPTO_LDFLAGS)
 fi
 
 dnl ------------ THREADING --------------

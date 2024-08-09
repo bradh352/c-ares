@@ -479,3 +479,9 @@
 /* Define to 1 if pthread_init() exists */
 #cmakedefine HAVE_PTHREAD_INIT 1
 
+/* Define to 1 to enable cryptographic operations in c-ares */
+#cmakedefine CARES_USE_CRYPTO 1
+
+/* Define to 1 if using OpenSSL as the crypto backend */
+#cmakedefine CARES_CRYPTO_OPENSSL 1
+
