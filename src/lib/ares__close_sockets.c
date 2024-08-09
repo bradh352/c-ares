@@ -63,7 +63,8 @@ void ares__close_connection(ares_conn_t *conn, ares_status_t requeue_status)
 
   ares__llist_destroy(conn->queries_to_conn);
 
-  SOCK_STATE_CALLBACK(channel, conn->fd, 0, 0);
+  ares__conn_sock_state_cb_update(conn, ARES_CONN_STATE_NONE);
+
   ares__close_socket(channel, conn->fd);
 
   ares_free(conn);

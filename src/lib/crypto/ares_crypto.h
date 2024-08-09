@@ -29,7 +29,20 @@
 struct ares_crypto_ctx;
 typedef struct ares_crypto_ctx ares_crypto_ctx_t;
 
-ares_status_t ares_crypto_ctx_init(ares_crypto_ctx_t **ctx);
-void ares_crypto_ctx_destroy(ares_crypto_ctx_t *ctx);
+ares_status_t                  ares_crypto_ctx_init(ares_crypto_ctx_t **ctx);
+void                           ares_crypto_ctx_destroy(ares_crypto_ctx_t *ctx);
+
+struct ares_tls;
+typedef struct ares_tls ares_tls_t;
+
+#if 0
+ares_tls_t *ares_tls_create(ares_conn_t *conn);
+ares_tls_destroy
+
+ares_tls_connect(ares_tls_t *tls);
+ares_tls_read(ares_tls_t *tls, unsigned char *buf, size_t *buf_len);
+ares_tls_write(ares_tls_t *tls, const unsigned char *buf, size_t *buf_len);
+ares_tls_shutdown(ares_tls_t *tls);
+#endif
 
 #endif

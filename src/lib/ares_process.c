@@ -58,11 +58,8 @@ static ares_status_t process_answer(ares_channel_t      *channel,
                                     const ares_timeval_t *now);
 static void handle_conn_error(ares_conn_t *conn, ares_bool_t critical_failure,
                               ares_status_t failure_status);
-
 static ares_bool_t same_questions(const ares_query_t      *query,
                                   const ares_dns_record_t *arec);
-static ares_bool_t same_address(const struct sockaddr  *sa,
-                                const struct ares_addr *aa);
 static void        end_query(ares_channel_t *channel, ares_server_t *server,
                              ares_query_t *query, ares_status_t status,
                              const ares_dns_record_t *dnsrec);
@@ -204,11 +201,9 @@ static void processfds(ares_channel_t *channel, fd_set *read_fds,
   }
 
   ares__channel_lock(channel);
-
   ares__tvnow(&now);
   read_packets(channel, read_fds, read_fd, &now);
   process_timeouts(channel, &now);
-  /* Write last as the other 2 operations might have triggered writes */
   write_tcp_data(channel, write_fds, write_fd);
 
   /* See if any connections should be cleaned up */
@@ -235,6 +230,42 @@ void ares_process_fd(ares_channel_t *channel,
   processfds(channel, NULL, read_fd, NULL, write_fd);
 }
 
+static ares_status_t ares__conn_write_tcp(ares_conn_t *conn,
+                                          ares_bool_t  pass_thru_error)
+{
+  ares_server_t       *server;
+  const unsigned char *data;
+  size_t               data_len;
+  size_t               count;
+  ares_conn_err_t      err;
+
+  if (conn == NULL) {
+    return ARES_EFORMERR;
+  }
+
+  server = conn->server;
+
+  if (ares__buf_len(server->tcp_send) == 0) {
+    return ARES_SUCCESS;
+  }
+
+  data = ares__buf_peek(server->tcp_send, &data_len);
+  err  = ares__conn_write(conn, data, data_len, &count);
+  if (err != ARES_CONN_ERR_SUCCESS) {
+    if (err != ARES_CONN_ERR_WOULDBLOCK) {
+      if (!pass_thru_error) {
+        handle_conn_error(conn, ARES_TRUE, ARES_ECONNREFUSED);
+      }
+      return ARES_ECONNREFUSED;
+    }
+    return ARES_SUCCESS;
+  }
+
+  /* Strip data written from the buffer */
+  ares__buf_consume(server->tcp_send, (size_t)count);
+  return ARES_SUCCESS;
+}
+
 /* If any TCP sockets select true for writing, write out queued data
  * we have for them.
  */
@@ -243,60 +274,73 @@ static void write_tcp_data(ares_channel_t *channel, fd_set *write_fds,
 {
   ares__slist_node_t *node;
 
-  if (!write_fds && (write_fd == ARES_SOCKET_BAD)) {
-    /* no possible action */
+  /* no possible action */
+  if (write_fds == NULL && write_fd == ARES_SOCKET_BAD) {
     return;
   }
 
   for (node = ares__slist_node_first(channel->servers); node != NULL;
        node = ares__slist_node_next(node)) {
-    ares_server_t       *server = ares__slist_node_val(node);
-    const unsigned char *data;
-    size_t               data_len;
-    ares_ssize_t         count;
+    ares_server_t *server = ares__slist_node_val(node);
+    ares_conn_t   *conn   = server->tcp_conn;
 
-    /* Make sure server has data to send and is selected in write_fds or
-       write_fd. */
-    if (ares__buf_len(server->tcp_send) == 0 || server->tcp_conn == NULL) {
+    if (conn == NULL) {
       continue;
     }
 
     if (write_fds) {
-      if (!FD_ISSET(server->tcp_conn->fd, write_fds)) {
+      if (!FD_ISSET(conn->fd, write_fds)) {
         continue;
       }
     } else {
-      if (server->tcp_conn->fd != write_fd) {
+      if (conn->fd != write_fd) {
         continue;
       }
     }
 
-    if (write_fds) {
-      /* If there's an error and we close this socket, then open
-       * another with the same fd to talk to another server, then we
-       * don't want to think that it was the new socket that was
-       * ready. This is not disastrous, but is likely to result in
-       * extra system calls and confusion. */
-      FD_CLR(server->tcp_conn->fd, write_fds);
+    /* Mark as connected if we got here and TFO Initial not set */
+    if (!(conn->flags & ARES_CONN_FLAG_TFO_INITIAL)) {
+      conn->state_flags |= ARES_CONN_STATE_CONNECTED;
     }
 
-    data  = ares__buf_peek(server->tcp_send, &data_len);
-    count = ares__conn_write(server->tcp_conn, data, data_len);
-    if (count <= 0) {
-      if (!ares__socket_try_again(SOCKERRNO)) {
-        handle_conn_error(server->tcp_conn, ARES_TRUE, ARES_ECONNREFUSED);
-      }
+    ares__conn_write_tcp(conn, ARES_FALSE);
+  }
+}
+
+void ares_process_pending_write(ares_channel_t *channel)
+{
+  ares__slist_node_t *node;
+
+  if (channel == NULL) {
+    return;
+  }
+
+  ares__channel_lock(channel);
+  if (!channel->notify_pending_write) {
+    ares__channel_unlock(channel);
+    return;
+  }
+
+  /* Set as untriggerd before calling into ares__conn_write_tcp(), this is
+   * because its possible ares__conn_write_tcp() might cause additional data to
+   * be enqueued if there is some form of exception so it will need to recurse.
+   */
+  channel->notify_pending_write = ARES_FALSE;
+
+  for (node = ares__slist_node_first(channel->servers); node != NULL;
+       node = ares__slist_node_next(node)) {
+    ares_server_t *server = ares__slist_node_val(node);
+    ares_conn_t   *conn   = server->tcp_conn;
+
+    if (conn == NULL) {
       continue;
     }
 
-    /* Strip data written from the buffer */
-    ares__buf_consume(server->tcp_send, (size_t)count);
-
-    /* Notify state callback all data is written */
-    if (ares__buf_len(server->tcp_send) == 0) {
-      SOCK_STATE_CALLBACK(channel, server->tcp_conn->fd, 1, 0);
-    }
+    /* Enqueue any pending data if there is any */
+    ares__conn_write_tcp(conn, ARES_FALSE);
   }
+
+  ares__channel_unlock(channel);
 }
 
 /* If any TCP socket selects true for reading, read some data,
@@ -306,12 +350,13 @@ static void write_tcp_data(ares_channel_t *channel, fd_set *write_fds,
 static void read_tcp_data(ares_channel_t *channel, ares_conn_t *conn,
                           const ares_timeval_t *now)
 {
-  ares_ssize_t   count;
-  ares_server_t *server = conn->server;
+  size_t          count;
+  ares_server_t  *server = conn->server;
+  ares_conn_err_t err;
 
   /* Fetch buffer to store data we are reading */
-  size_t         ptr_len = 65535;
-  unsigned char *ptr;
+  size_t          ptr_len = 65535;
+  unsigned char  *ptr;
 
   ptr = ares__buf_append_start(server->tcp_parser, &ptr_len);
 
@@ -323,10 +368,11 @@ static void read_tcp_data(ares_channel_t *channel, ares_conn_t *conn,
   }
 
   /* Read from socket */
-  count = ares__socket_recv(channel, conn->fd, ptr, ptr_len);
-  if (count <= 0) {
+  err = ares__conn_read(conn, ptr, ptr_len, &count);
+
+  if (err != ARES_CONN_ERR_SUCCESS) {
     ares__buf_append_finish(server->tcp_parser, 0);
-    if (!(count == -1 && ares__socket_try_again(SOCKERRNO))) {
+    if (err != ARES_CONN_ERR_WOULDBLOCK) {
       handle_conn_error(conn, ARES_TRUE, ARES_ECONNREFUSED);
     }
     return;
@@ -423,63 +469,29 @@ static ares_socket_t *channel_socket_list(const ares_channel_t *channel,
 static void read_udp_packets_fd(ares_channel_t *channel, ares_conn_t *conn,
                                 const ares_timeval_t *now)
 {
-  ares_ssize_t  read_len;
-  unsigned char buf[MAXENDSSZ + 1];
-
-#ifdef HAVE_RECVFROM
-  ares_socklen_t fromlen;
-
-  union {
-    struct sockaddr     sa;
-    struct sockaddr_in  sa4;
-    struct sockaddr_in6 sa6;
-  } from;
-
-  memset(&from, 0, sizeof(from));
-#endif
+  size_t          read_len;
+  ares_conn_err_t err = ARES_CONN_ERR_SUCCESS;
+  unsigned char   buf[MAXENDSSZ + 1];
 
   /* To reduce event loop overhead, read and process as many
    * packets as we can. */
   do {
     if (conn->fd == ARES_SOCKET_BAD) {
-      read_len = -1;
+      err = ARES_CONN_ERR_FAILURE;
     } else {
-      if (conn->server->addr.family == AF_INET) {
-        fromlen = sizeof(from.sa4);
-      } else {
-        fromlen = sizeof(from.sa6);
-      }
-      read_len = ares__socket_recvfrom(channel, conn->fd, (void *)buf,
-                                       sizeof(buf), 0, &from.sa, &fromlen);
+      err = ares__conn_read(conn, (void *)buf, sizeof(buf), &read_len);
     }
 
-    if (read_len == 0) {
-      /* UDP is connectionless, so result code of 0 is a 0-length UDP
-       * packet, and not an indication the connection is closed like on
-       * tcp */
-      continue;
-    } else if (read_len < 0) {
-      if (ares__socket_try_again(SOCKERRNO)) {
-        break;
-      }
-
+    if (err == ARES_CONN_ERR_SUCCESS) {
+      process_answer(channel, buf, (size_t)read_len, conn, ARES_FALSE, now);
+    } else if (err != ARES_CONN_ERR_WOULDBLOCK) {
       handle_conn_error(conn, ARES_TRUE, ARES_ECONNREFUSED);
       return;
-#ifdef HAVE_RECVFROM
-    } else if (!same_address(&from.sa, &conn->server->addr)) {
-      /* The address the response comes from does not match the address we
-       * sent the request to. Someone may be attempting to perform a cache
-       * poisoning attack. */
-      continue;
-#endif
-
-    } else {
-      process_answer(channel, buf, (size_t)read_len, conn, ARES_FALSE, now);
     }
 
     /* Try to read again only if *we* set up the socket, otherwise it may be
      * a blocking socket and would cause recvfrom to hang. */
-  } while (read_len >= 0 && channel->sock_funcs == NULL);
+  } while (err == ARES_CONN_ERR_SUCCESS && channel->sock_funcs == NULL);
 }
 
 static void read_packets(ares_channel_t *channel, fd_set *read_fds,
@@ -617,6 +629,11 @@ static ares_status_t process_answer(ares_channel_t      *channel,
   ares_dns_record_t *rdnsrec = NULL;
   ares_status_t      status;
   ares_bool_t        is_cached = ARES_FALSE;
+
+  /* UDP can have 0-byte messages, drop them to the ground */
+  if (alen == 0) {
+    return ARES_SUCCESS;
+  }
 
   /* Parse the response */
   status = ares_dns_parse(abuf, alen, 0, &rdnsrec);
@@ -973,9 +990,10 @@ static ares_status_t ares__conn_query_write(ares_conn_t          *conn,
 {
   unsigned char  *qbuf     = NULL;
   size_t          qbuf_len = 0;
-  ares_ssize_t    len;
-  ares_server_t  *server  = conn->server;
-  ares_channel_t *channel = server->channel;
+  size_t          len;
+  ares_conn_err_t err;
+  ares_server_t  *server   = conn->server;
+  ares_channel_t *channel  = server->channel;
   ares_status_t   status;
 
   status = ares_cookie_apply(query->query, conn, now);
@@ -984,41 +1002,28 @@ static ares_status_t ares__conn_query_write(ares_conn_t          *conn,
   }
 
   if (conn->flags & ARES_CONN_FLAG_TCP) {
-    size_t prior_len = ares__buf_len(server->tcp_send);
-
     status = ares_dns_write_buf_tcp(query->query, server->tcp_send);
     if (status != ARES_SUCCESS) {
       return status;
     }
 
-    if (conn->flags & ARES_CONN_FLAG_TFO_INITIAL) {
-      /* When using TFO, we need to put it on the wire immediately. */
-      size_t               data_len;
-      const unsigned char *data = NULL;
-
-      data = ares__buf_peek(server->tcp_send, &data_len);
-      len  = ares__conn_write(conn, data, data_len);
-      if (len <= 0) {
-        if (ares__socket_try_again(SOCKERRNO)) {
-          /* This means we must not have qualified for TFO, keep the data
-           * buffered, wait on write signal. */
-          return ARES_SUCCESS;
-        }
-
-        /* TCP TFO might delay failure.  Reflect that here */
-        return ARES_ECONNREFUSED;
-      }
-
-      /* Consume what was written */
-      ares__buf_consume(server->tcp_send, (size_t)len);
+    /* Not pending a TFO write and not connected, so we can't even try to
+     * write until we get a signal */
+    if (!(conn->state_flags & ARES_CONN_STATE_CONNECTED) &&
+        !(conn->flags & ARES_CONN_FLAG_TFO_INITIAL)) {
       return ARES_SUCCESS;
     }
 
-    if (prior_len == 0) {
-      SOCK_STATE_CALLBACK(channel, conn->fd, 1, 1);
+    /* Delay actual write if possible */
+    if (channel->notify_pending_write_cb && !channel->notify_pending_write) {
+      channel->notify_pending_write = ARES_TRUE;
+      channel->notify_pending_write_cb(channel->notify_pending_write_cb_data);
+      return ARES_SUCCESS;
+    } else {
+      /* Unfortunately we need to write right away and can't aggregate multiple
+       * queries into a single write. */
+      return ares__conn_write_tcp(conn, ARES_TRUE);
     }
-
-    return ARES_SUCCESS;
   }
 
   /* UDP Here */
@@ -1027,13 +1032,13 @@ static ares_status_t ares__conn_query_write(ares_conn_t          *conn,
     return status;
   }
 
-  len = ares__conn_write(conn, qbuf, qbuf_len);
+  err = ares__conn_write(conn, qbuf, qbuf_len, &len);
   ares_free(qbuf);
 
-  if (len == -1) {
-    if (ares__socket_try_again(SOCKERRNO)) {
-      return ARES_ESERVFAIL;
-    }
+  /* TODO: do something smarter here.  Right now this causes a requeue */
+  if (err == ARES_CONN_ERR_WOULDBLOCK) {
+    return ARES_ESERVFAIL;
+  } else if (err != ARES_CONN_ERR_SUCCESS) {
     /* UDP is connection-less, but we might receive an ICMP unreachable which
      * means we can't talk to the remote host at all and that will be
      * reflected here */
@@ -1150,6 +1155,7 @@ ares_status_t ares__send_query(ares_query_t *query, const ares_timeval_t *now)
 
   query->conn = conn;
   conn->total_queries++;
+
   return ARES_SUCCESS;
 }
 
@@ -1211,36 +1217,6 @@ static ares_bool_t same_questions(const ares_query_t      *query,
 
 done:
   return rv;
-}
-
-static ares_bool_t same_address(const struct sockaddr  *sa,
-                                const struct ares_addr *aa)
-{
-  const void *addr1;
-  const void *addr2;
-
-  if (sa->sa_family == aa->family) {
-    switch (aa->family) {
-      case AF_INET:
-        addr1 = &aa->addr.addr4;
-        addr2 = &(CARES_INADDR_CAST(const struct sockaddr_in *, sa))->sin_addr;
-        if (memcmp(addr1, addr2, sizeof(aa->addr.addr4)) == 0) {
-          return ARES_TRUE; /* match */
-        }
-        break;
-      case AF_INET6:
-        addr1 = &aa->addr.addr6;
-        addr2 =
-          &(CARES_INADDR_CAST(const struct sockaddr_in6 *, sa))->sin6_addr;
-        if (memcmp(addr1, addr2, sizeof(aa->addr.addr6)) == 0) {
-          return ARES_TRUE; /* match */
-        }
-        break;
-      default:
-        break; /* LCOV_EXCL_LINE */
-    }
-  }
-  return ARES_FALSE; /* different */
 }
 
 static void ares_detach_query(ares_query_t *query)
