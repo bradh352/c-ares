@@ -281,7 +281,7 @@ static ares_status_t ares__conn_flush(ares_conn_t *conn,
       goto done;
     }
 
-    /* UDP didn't send the lenght prefix so augment that here */
+    /* UDP didn't send the length prefix so augment that here */
     if (!(conn->flags & ARES_CONN_FLAG_TCP)) {
       count += 2;
     }
