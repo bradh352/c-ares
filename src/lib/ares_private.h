@@ -188,6 +188,12 @@ struct ares_conn {
   ares_conn_flags_t       flags;
   ares_conn_state_flags_t state_flags;
 
+  /*! Outbound buffered data that is not yet sent.  Exists as one contiguous
+   *  stream in TCP format (big endian 16bit length prefix followed by DNS
+   *  wire-format message).  For TCP this can be sent as-is, UDP this must
+   *  be sent per-packet (stripping the length prefix) */
+  ares__buf_t            *out_buf;
+
   /* total number of queries run on this connection since it was established */
   size_t                  total_queries;
 
@@ -286,9 +292,6 @@ struct ares_server {
   /* TCP buffer since multiple responses can come back in one read, or partial
    * in a read */
   ares__buf_t          *tcp_parser;
-
-  /* TCP output queue */
-  ares__buf_t          *tcp_send;
 
   /*! Buckets for collecting metrics about the server */
   ares_server_metrics_t metrics[ARES_METRIC_COUNT];

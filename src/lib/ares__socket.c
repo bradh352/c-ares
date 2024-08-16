@@ -540,7 +540,7 @@ done:
     } else if (err == ARES_CONN_ERR_WOULDBLOCK) {
       /* Need to wait on more buffer space to write */
       ares__conn_sock_state_cb_update(conn, ARES_CONN_STATE_READ |
-                                      ARES_CONN_STATE_WRITE);
+                                              ARES_CONN_STATE_WRITE);
     }
   }
 
@@ -840,6 +840,14 @@ ares_status_t ares__open_connection(ares_conn_t   **conn_out,
   conn->server          = server;
   conn->queries_to_conn = ares__llist_create(NULL);
   conn->flags           = is_tcp ? ARES_CONN_FLAG_TCP : ARES_CONN_FLAG_NONE;
+  conn->out_buf         = ares__buf_create();
+
+  if (conn->queries_to_conn == NULL || conn->out_buf == NULL) {
+    /* LCOV_EXCL_START: OutOfMemory */
+    status = ARES_ENOMEM;
+    goto done;
+    /* LCOV_EXCL_STOP */
+  }
 
   /* Enable TFO if the OS supports it and we were passed in data to send during
    * the connect. It might be disabled later if an error is encountered. Make
@@ -847,13 +855,6 @@ ares_status_t ares__open_connection(ares_conn_t   **conn_out,
   if (conn->flags & ARES_CONN_FLAG_TCP && channel->sock_funcs == NULL &&
       TFO_SUPPORTED) {
     conn->flags |= ARES_CONN_FLAG_TFO;
-  }
-
-  if (conn->queries_to_conn == NULL) {
-    /* LCOV_EXCL_START: OutOfMemory */
-    status = ARES_ENOMEM;
-    goto done;
-    /* LCOV_EXCL_STOP */
   }
 
   /* Convert into the struct sockaddr structure needed by the OS */
@@ -1053,9 +1054,8 @@ void ares_set_socket_functions(ares_channel_t                     *channel,
 }
 
 void ares_set_notify_pending_write_callback(
-  ares_channel_t                    *channel,
-  ares_notify_pending_write_callback callback,
-  void                              *user_data)
+  ares_channel_t *channel, ares_notify_pending_write_callback callback,
+  void *user_data)
 {
   if (channel == NULL || channel->optmask & ARES_OPT_EVENT_THREAD) {
     return;
