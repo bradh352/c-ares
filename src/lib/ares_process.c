@@ -280,7 +280,7 @@ static void ares_notify_write(ares_conn_t *conn)
   if (!(conn->flags & ARES_CONN_FLAG_TFO_INITIAL)) {
     conn->state_flags |= ARES_CONN_STATE_CONNECTED;
   }
-fprintf(stderr, "%s(): fd=%d, flags=%d, state_flags=%d\n", __FUNCTION__, (int)conn->fd, (int)conn->flags, (int)conn->state_flags);
+
   status = ares__conn_flush(conn);
   if (status != ARES_SUCCESS) {
     handle_conn_error(conn, ARES_TRUE, status);
@@ -1014,7 +1014,7 @@ static ares_status_t ares__conn_query_write(ares_conn_t          *conn,
   if (status != ARES_SUCCESS) {
     return status;
   }
-fprintf(stderr, "%s(): writing query %p for fd %d\n", __FUNCTION__, (void *)query, (int)conn->fd);
+
   /* Not pending a TFO write and not connected, so we can't even try to
    * write until we get a signal */
   if (conn->flags & ARES_CONN_FLAG_TCP &&

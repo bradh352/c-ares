@@ -213,7 +213,7 @@ static ares_conn_err_t ares__socket_deref_error(int err)
     default:
       break;
   }
-fprintf(stderr, "*** %s(): unmapped error code %d\n", __FUNCTION__, err);
+
   return ARES_CONN_ERR_FAILURE;
 }
 
@@ -261,7 +261,6 @@ void ares__conn_sock_state_cb_update(ares_conn_t            *conn,
 
   conn->state_flags &= ~((unsigned int)ARES_CONN_STATE_CBFLAGS);
   conn->state_flags |= flags;
-fprintf(stderr, "%s(): fd=%d, flags=%d, state_flags=%d\n", __FUNCTION__, (int)conn->fd, (int)conn->flags, (int)conn->state_flags);
 }
 
 ares_conn_err_t ares__socket_recv(ares_channel_t *channel, ares_socket_t s,
@@ -269,7 +268,7 @@ ares_conn_err_t ares__socket_recv(ares_channel_t *channel, ares_socket_t s,
                                   size_t data_len, size_t *read_bytes)
 {
   ares_ssize_t rv;
-fprintf(stderr, "%s(): here\n", __FUNCTION__);
+
   *read_bytes = 0;
 
   if (channel->sock_funcs && channel->sock_funcs->arecvfrom) {
@@ -306,7 +305,6 @@ ares_conn_err_t ares__socket_recvfrom(ares_channel_t *channel, ares_socket_t s,
                                       size_t          *read_bytes)
 {
   ares_ssize_t rv;
-fprintf(stderr, "%s(): here\n", __FUNCTION__);
 
   if (channel->sock_funcs && channel->sock_funcs->arecvfrom) {
     rv = channel->sock_funcs->arecvfrom(s, data, data_len, flags, from,
@@ -368,9 +366,6 @@ ares_conn_err_t ares__conn_read(ares_conn_t *conn, void *data, size_t len,
   /* Toggle connected state if needed */
   if (err == ARES_CONN_ERR_SUCCESS) {
     conn->state_flags |= ARES_CONN_STATE_CONNECTED;
-fprintf(stderr, "%s(): fd=%d read %d bytes\n", __FUNCTION__, (int)conn->fd, (int)*read_bytes);
-  } else {
-fprintf(stderr, "%s(): fd=%d failed err=%d\n", __FUNCTION__, (int)conn->fd, (int)err);
   }
 
   return err;
@@ -470,7 +465,6 @@ ares_conn_err_t ares__conn_write(ares_conn_t *conn, const void *data,
   ares_conn_err_t err    = ARES_CONN_ERR_SUCCESS;
 
   *written = 0;
-fprintf(stderr, "%s(): here\n", __FUNCTION__);
 
   /* Don't try to write if not doing initial TFO and not connected */
   if (conn->flags & ARES_CONN_FLAG_TCP &&
@@ -539,7 +533,6 @@ fprintf(stderr, "%s(): here\n", __FUNCTION__);
   goto done;
 
 done:
-fprintf(stderr, "%s(): fd=%d, err=%d, written=%d\n", __FUNCTION__, (int)conn->fd, (int)err, (int)*written);
   if (err == ARES_CONN_ERR_SUCCESS && len == *written) {
     /* Wrote all data, make sure we're not listening for write events unless
      * using TFO, in which case we'll need a write event to know when
@@ -625,8 +618,6 @@ ares_status_t ares__conn_flush(ares_conn_t *conn)
   } while (!(conn->flags & ARES_CONN_FLAG_TCP));
 
 done:
-fprintf(stderr, "%s(): status=%d, fd=%d, flags=%d, state_flags=%d\n", __FUNCTION__, (int)status, (int)conn->fd, (int)conn->flags, (int)conn->state_flags);
-
   if (status == ARES_SUCCESS) {
     ares_conn_state_flags_t flags = ARES_CONN_STATE_READ;
 
@@ -873,8 +864,6 @@ ares_bool_t ares_sockaddr_to_ares_addr(struct ares_addr      *ares_addr,
 static ares_status_t ares__conn_connect(ares_conn_t *conn, struct sockaddr *sa,
                                         ares_socklen_t salen)
 {
-fprintf(stderr, "%s(): fd=%d, %s\n", __FUNCTION__, (int)conn->fd, conn->flags & ARES_CONN_FLAG_TCP?"tcp":"udp");
-
   /* Normal non TCPFastOpen style connect */
   if (!(conn->flags & ARES_CONN_FLAG_TFO)) {
     return ares__connect_socket(conn->server->channel, conn->fd, sa, salen);
@@ -933,7 +922,6 @@ ares_status_t ares__open_connection(ares_conn_t   **conn_out,
   ares_conn_state_flags_t state_flags;
 
   *conn_out = NULL;
-fprintf(stderr, "%s(): %s\n", __FUNCTION__, is_tcp?"tcp":"udp");
 
   conn = ares_malloc(sizeof(*conn));
   if (conn == NULL) {
@@ -1071,7 +1059,6 @@ done:
     ares_free(conn);
   } else {
     *conn_out = conn;
-fprintf(stderr, "%s(): new fd=%d %s\n", __FUNCTION__, (int)conn->fd, conn->flags & ARES_CONN_FLAG_TCP?"tcp":"udp");
   }
   return status;
 }
@@ -1080,7 +1067,6 @@ ares_conn_err_t ares__open_socket(ares_socket_t *sock, ares_channel_t *channel,
                                   int af, int type, int protocol)
 {
   ares_socket_t s;
-fprintf(stderr, "%s(): here\n", __FUNCTION__);
 
   *sock = ARES_SOCKET_BAD;
 
@@ -1107,7 +1093,6 @@ ares_status_t ares__connect_socket(ares_channel_t        *channel,
 {
   int             rv;
   ares_conn_err_t err;
-fprintf(stderr, "%s(): fd=%d\n", __FUNCTION__, (int)sockfd);
 
   do {
     if (channel->sock_funcs && channel->sock_funcs->aconnect) {
