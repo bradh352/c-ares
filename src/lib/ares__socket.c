@@ -211,6 +211,7 @@ static ares_conn_err_t ares__socket_deref_error(int err)
     default:
       break;
   }
+fprintf(stderr, "*** %s(): unmapped error code %d\n", __FUNCTION__, err);
   return ARES_CONN_ERR_FAILURE;
 }
 
@@ -258,6 +259,7 @@ void ares__conn_sock_state_cb_update(ares_conn_t            *conn,
 
   conn->state_flags &= ~((unsigned int)ARES_CONN_STATE_CBFLAGS);
   conn->state_flags |= flags;
+fprintf(stderr, "%s(): fd=%d, flags=%d, state_flags=%d\n", __FUNCTION__, (int)conn->fd, (int)conn->flags, (int)conn->state_flags);
 }
 
 ares_conn_err_t ares__socket_recv(ares_channel_t *channel, ares_socket_t s,
@@ -265,7 +267,7 @@ ares_conn_err_t ares__socket_recv(ares_channel_t *channel, ares_socket_t s,
                                   size_t data_len, size_t *read_bytes)
 {
   ares_ssize_t rv;
-
+fprintf(stderr, "%s(): here\n", __FUNCTION__);
   *read_bytes = 0;
 
   if (channel->sock_funcs && channel->sock_funcs->arecvfrom) {
@@ -302,6 +304,8 @@ ares_conn_err_t ares__socket_recvfrom(ares_channel_t *channel, ares_socket_t s,
                                       size_t          *read_bytes)
 {
   ares_ssize_t rv;
+fprintf(stderr, "%s(): here\n", __FUNCTION__);
+
   if (channel->sock_funcs && channel->sock_funcs->arecvfrom) {
     rv = channel->sock_funcs->arecvfrom(s, data, data_len, flags, from,
                                         from_len, channel->sock_func_cb_data);
@@ -362,6 +366,9 @@ ares_conn_err_t ares__conn_read(ares_conn_t *conn, void *data, size_t len,
   /* Toggle connected state if needed */
   if (err == ARES_CONN_ERR_SUCCESS) {
     conn->state_flags |= ARES_CONN_STATE_CONNECTED;
+fprintf(stderr, "%s(): fd=%d read %d bytes\n", __FUNCTION__, (int)conn->fd, (int)*read_bytes);
+  } else {
+fprintf(stderr, "%s(): fd=%d failed err=%d\n", __FUNCTION__, (int)conn->fd, (int)err);
   }
 
   return err;
@@ -461,6 +468,7 @@ ares_conn_err_t ares__conn_write(ares_conn_t *conn, const void *data,
   ares_conn_err_t err    = ARES_CONN_ERR_SUCCESS;
 
   *written = 0;
+fprintf(stderr, "%s(): here\n", __FUNCTION__);
 
   /* Don't try to write if not doing initial TFO and not connected */
   if (conn->flags & ARES_CONN_FLAG_TCP &&
@@ -852,6 +860,8 @@ ares_bool_t ares_sockaddr_to_ares_addr(struct ares_addr      *ares_addr,
 static ares_status_t ares__conn_connect(ares_conn_t *conn, struct sockaddr *sa,
                                         ares_socklen_t salen)
 {
+fprintf(stderr, "%s(): fd=%d, %s\n", __FUNCTION__, (int)conn->fd, conn->flags & ARES_CONN_FLAG_TCP?"tcp":"udp");
+
   /* Normal non TCPFastOpen style connect */
   if (!(conn->flags & ARES_CONN_FLAG_TFO)) {
     return ares__connect_socket(conn->server->channel, conn->fd, sa, salen);
@@ -910,6 +920,7 @@ ares_status_t ares__open_connection(ares_conn_t   **conn_out,
   ares_conn_state_flags_t state_flags;
 
   *conn_out = NULL;
+fprintf(stderr, "%s(): %s\n", __FUNCTION__, is_tcp?"tcp":"udp");
 
   conn = ares_malloc(sizeof(*conn));
   if (conn == NULL) {
@@ -1018,17 +1029,18 @@ ares_status_t ares__open_connection(ares_conn_t   **conn_out,
 
   state_flags = ARES_CONN_STATE_READ;
 
-  /* Get notified on connect if using TCP without TFO with a write event.
-   * If TFO is enabled, the write operation itself will turn this on.  We don't
-   * want to prematurely turn on waiting on a write event because of the delayed
-   * flushing that can occur for TCP, that operation will enable waiting on the
-   * write event */
-  if (conn->flags & ARES_CONN_FLAG_TCP &&
-      !(conn->flags & ARES_CONN_FLAG_TFO_INITIAL)) {
+  /* Get notified on connect if using TCP */
+  if (conn->flags & ARES_CONN_FLAG_TCP) {
     state_flags |= ARES_CONN_STATE_WRITE;
   }
 
-  ares__conn_sock_state_cb_update(conn, state_flags);
+  /* Dot no attempt to update sock state callbacks on TFO until *after* the
+   * initial write is performed.  Due to the notification event, its possible
+   * an erroneous read can come in before the attempt to write the data which
+   * might be used to set the ip address */
+  if (!(conn->flags & ARES_CONN_FLAG_TFO_INITIAL)) {
+    ares__conn_sock_state_cb_update(conn, state_flags);
+  }
 
   if (is_tcp) {
     server->tcp_conn = conn;
@@ -1043,6 +1055,7 @@ done:
     ares_free(conn);
   } else {
     *conn_out = conn;
+fprintf(stderr, "%s(): new fd=%d %s\n", __FUNCTION__, (int)conn->fd, conn->flags & ARES_CONN_FLAG_TCP?"tcp":"udp");
   }
   return status;
 }
@@ -1051,6 +1064,7 @@ ares_conn_err_t ares__open_socket(ares_socket_t *sock, ares_channel_t *channel,
                                   int af, int type, int protocol)
 {
   ares_socket_t s;
+fprintf(stderr, "%s(): here\n", __FUNCTION__);
 
   *sock = ARES_SOCKET_BAD;
 
@@ -1077,6 +1091,7 @@ ares_status_t ares__connect_socket(ares_channel_t        *channel,
 {
   int             rv;
   ares_conn_err_t err;
+fprintf(stderr, "%s(): fd=%d\n", __FUNCTION__, (int)sockfd);
 
   do {
     if (channel->sock_funcs && channel->sock_funcs->aconnect) {
