@@ -238,9 +238,14 @@ static ares_status_t ares__conn_flush(ares_conn_t *conn,
   size_t               count;
   ares_conn_err_t      err;
   ares_status_t        status;
+  ares_bool_t          tfo = ARES_FALSE;
 
   if (conn == NULL) {
     return ARES_EFORMERR;
+  }
+
+  if (conn->flags & ARES_CONN_FLAG_TFO_INITIAL) {
+    tfo = ARES_TRUE;
   }
 
   do {
@@ -295,6 +300,10 @@ fprintf(stderr, "%s(): fd=%d wrote %d bytes\n", __FUNCTION__, (int)conn->fd, (in
   } while (!(conn->flags & ARES_CONN_FLAG_TCP));
 
 done:
+  if (status == ARES_SUCCESS) {
+    ares__conn_sock_state_cb_update(conn, ARES_CONN_STATE_READ |
+      (tfo?ARES_CONN_STATE_WRITE:ARES_CONN_STATE_NONE));
+  }
   if (status != ARES_SUCCESS && !pass_thru_error) {
     handle_conn_error(conn, ARES_TRUE, status);
   }
