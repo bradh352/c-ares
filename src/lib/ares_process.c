@@ -285,7 +285,7 @@ static ares_status_t ares__conn_flush(ares_conn_t *conn,
     if (!(conn->flags & ARES_CONN_FLAG_TCP)) {
       count += 2;
     }
-
+fprintf(stderr, "%s(): fd=%d wrote %d bytes\n", __FUNCTION__, (int)conn->fd, (int)count);
     /* Strip data written from the buffer */
     ares__buf_consume(conn->out_buf, (size_t)count);
     status = ARES_SUCCESS;
@@ -296,7 +296,7 @@ static ares_status_t ares__conn_flush(ares_conn_t *conn,
 
 done:
   if (status != ARES_SUCCESS && !pass_thru_error) {
-    handle_conn_error(conn, ARES_TRUE, ARES_ECONNREFUSED);
+    handle_conn_error(conn, ARES_TRUE, status);
   }
   return status;
 }
@@ -1063,6 +1063,7 @@ static ares_status_t ares__conn_query_write(ares_conn_t          *conn,
   if (status != ARES_SUCCESS) {
     return status;
   }
+fprintf(stderr, "%s(): writing query %p to fd %d\n", __FUNCTION__, query, (int)conn->fd);
 
   /* Not pending a TFO write and not connected, so we can't even try to
    * write until we get a signal */
