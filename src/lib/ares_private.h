@@ -647,6 +647,7 @@ typedef enum {
   ARES_CONN_ERR_NETUNREACH   = 10, /*!< Network Unreachable */
   ARES_CONN_ERR_INTERRUPT    = 11, /*!< Call interrupted by signal, repeat */
   ARES_CONN_ERR_AFNOSUPPORT  = 12, /*!< Address family not supported */
+  ARES_CONN_ERR_BADADDR      = 13, /*!< Bad Address / Unavailable */
   ARES_CONN_ERR_FAILURE      = 99  /*!< Generic failure */
 } ares_conn_err_t;
 

@@ -208,6 +208,8 @@ static ares_conn_err_t ares__socket_deref_error(int err)
       return ARES_CONN_ERR_INTERRUPT;
     case EAFNOSUPPORT:
       return ARES_CONN_ERR_AFNOSUPPORT;
+    case EADDRNOTAVAIL:
+      return ARES_CONN_ERR_BADADDR;
     default:
       break;
   }
