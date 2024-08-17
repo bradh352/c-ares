@@ -547,6 +547,85 @@ done:
   return err;
 }
 
+ares_status_t ares__conn_flush(ares_conn_t *conn)
+{
+  const unsigned char *data;
+  size_t               data_len;
+  size_t               count;
+  ares_conn_err_t      err;
+  ares_status_t        status;
+  ares_bool_t          tfo = ARES_FALSE;
+
+  if (conn == NULL) {
+    return ARES_EFORMERR;
+  }
+
+  if (conn->flags & ARES_CONN_FLAG_TFO_INITIAL) {
+    tfo = ARES_TRUE;
+  }
+
+  do {
+    if (ares__buf_len(conn->out_buf) == 0) {
+      status = ARES_SUCCESS;
+      goto done;
+    }
+
+    if (conn->flags & ARES_CONN_FLAG_TCP) {
+      data = ares__buf_peek(conn->out_buf, &data_len);
+    } else {
+      unsigned short msg_len;
+
+      /* Read length, then provide buffer without length */
+      ares__buf_tag(conn->out_buf);
+      status = ares__buf_fetch_be16(conn->out_buf, &msg_len);
+      if (status != ARES_SUCCESS) {
+        return status;
+      }
+      ares__buf_tag_rollback(conn->out_buf);
+
+      data = ares__buf_peek(conn->out_buf, &data_len);
+      if (data_len < msg_len + 2) {
+        status = ARES_EFORMERR;
+        goto done;
+      }
+      data     += 2;
+      data_len  = msg_len;
+    }
+
+    err = ares__conn_write(conn, data, data_len, &count);
+    if (err != ARES_CONN_ERR_SUCCESS) {
+      if (err != ARES_CONN_ERR_WOULDBLOCK) {
+        status = ARES_ECONNREFUSED;
+        goto done;
+      }
+      status = ARES_SUCCESS;
+      goto done;
+    }
+
+    /* UDP didn't send the length prefix so augment that here */
+    if (!(conn->flags & ARES_CONN_FLAG_TCP)) {
+      count += 2;
+    }
+
+    /* Strip data written from the buffer */
+    ares__buf_consume(conn->out_buf, (size_t)count);
+    status = ARES_SUCCESS;
+
+    /* Loop only for UDP since we have to send per-packet.  We already
+     * sent everything we could if using tcp */
+  } while (!(conn->flags & ARES_CONN_FLAG_TCP));
+
+done:
+  if (status == ARES_SUCCESS) {
+    /* When using TFO, the we need to enabling waiting on a write event to
+     * be notified of when a connection is actually established */
+    ares__conn_sock_state_cb_update(conn, ARES_CONN_STATE_READ |
+      (tfo?ARES_CONN_STATE_WRITE:ARES_CONN_STATE_NONE));
+  }
+
+  return status;
+}
+
 /*
  * setsocknonblock sets the given socket to either blocking or non-blocking
  * mode based on the 'nonblock' boolean argument. This function is highly

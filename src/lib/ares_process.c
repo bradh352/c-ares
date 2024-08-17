@@ -230,88 +230,6 @@ void ares_process_fd(ares_channel_t *channel,
   processfds(channel, NULL, read_fd, NULL, write_fd);
 }
 
-static ares_status_t ares__conn_flush(ares_conn_t *conn,
-                                      ares_bool_t  pass_thru_error)
-{
-  const unsigned char *data;
-  size_t               data_len;
-  size_t               count;
-  ares_conn_err_t      err;
-  ares_status_t        status;
-  ares_bool_t          tfo = ARES_FALSE;
-
-  if (conn == NULL) {
-    return ARES_EFORMERR;
-  }
-
-  if (conn->flags & ARES_CONN_FLAG_TFO_INITIAL) {
-    tfo = ARES_TRUE;
-  }
-
-  do {
-    if (ares__buf_len(conn->out_buf) == 0) {
-      status = ARES_SUCCESS;
-      goto done;
-    }
-
-    if (conn->flags & ARES_CONN_FLAG_TCP) {
-      data = ares__buf_peek(conn->out_buf, &data_len);
-    } else {
-      unsigned short msg_len;
-
-      /* Read length, then provide buffer without length */
-      ares__buf_tag(conn->out_buf);
-      status = ares__buf_fetch_be16(conn->out_buf, &msg_len);
-      if (status != ARES_SUCCESS) {
-        return status;
-      }
-      ares__buf_tag_rollback(conn->out_buf);
-
-      data = ares__buf_peek(conn->out_buf, &data_len);
-      if (data_len < msg_len + 2) {
-        status = ARES_EFORMERR;
-        goto done;
-      }
-      data     += 2;
-      data_len  = msg_len;
-    }
-
-    err = ares__conn_write(conn, data, data_len, &count);
-    if (err != ARES_CONN_ERR_SUCCESS) {
-      if (err != ARES_CONN_ERR_WOULDBLOCK) {
-        status = ARES_ECONNREFUSED;
-        goto done;
-      }
-      status = ARES_SUCCESS;
-      goto done;
-    }
-
-    /* UDP didn't send the length prefix so augment that here */
-    if (!(conn->flags & ARES_CONN_FLAG_TCP)) {
-      count += 2;
-    }
-fprintf(stderr, "%s(): fd=%d wrote %d bytes\n", __FUNCTION__, (int)conn->fd, (int)count);
-    /* Strip data written from the buffer */
-    ares__buf_consume(conn->out_buf, (size_t)count);
-    status = ARES_SUCCESS;
-
-    /* Loop only for UDP since we have to send per-packet.  We already
-     * sent everything we could if using tcp */
-  } while (!(conn->flags & ARES_CONN_FLAG_TCP));
-
-done:
-  if (status == ARES_SUCCESS) {
-    /* When using TFO, the we need to enabling waiting on a write event to
-     * be notified of when a connection is actually established */
-    ares__conn_sock_state_cb_update(conn, ARES_CONN_STATE_READ |
-      (tfo?ARES_CONN_STATE_WRITE:ARES_CONN_STATE_NONE));
-  }
-  if (status != ARES_SUCCESS && !pass_thru_error) {
-    handle_conn_error(conn, ARES_TRUE, status);
-  }
-  return status;
-}
-
 static ares_socket_t *channel_socket_list(const ares_channel_t *channel,
                                           size_t               *num)
 {
@@ -356,12 +274,16 @@ static ares_socket_t *channel_socket_list(const ares_channel_t *channel,
  */
 static void ares_notify_write(ares_conn_t *conn)
 {
+  ares_status_t status;
   /* Mark as connected if we got here and TFO Initial not set */
   if (!(conn->flags & ARES_CONN_FLAG_TFO_INITIAL)) {
     conn->state_flags |= ARES_CONN_STATE_CONNECTED;
   }
-fprintf(stderr, "%s(): fd=%d\n", __FUNCTION__, conn->fd);
-  ares__conn_flush(conn, ARES_FALSE);
+
+  status = ares__conn_flush(conn);
+  if (status != ARES_SUCCESS) {
+    handle_conn_error(conn, ARES_TRUE, status);
+  }
 }
 
 static void ares_notify_write_fds(ares_channel_t *channel, fd_set *write_fds,
@@ -441,13 +363,17 @@ void ares_process_pending_write(ares_channel_t *channel)
        node = ares__slist_node_next(node)) {
     ares_server_t *server = ares__slist_node_val(node);
     ares_conn_t   *conn   = server->tcp_conn;
+    ares_status_t  status;
 
     if (conn == NULL) {
       continue;
     }
 
     /* Enqueue any pending data if there is any */
-    ares__conn_flush(conn, ARES_FALSE);
+    status = ares__conn_flush(conn);
+    if (status != ARES_SUCCESS) {
+      handle_conn_error(conn, ARES_TRUE, status);
+    }
   }
 
   ares__channel_unlock(channel);
@@ -1074,7 +1000,6 @@ static ares_status_t ares__conn_query_write(ares_conn_t          *conn,
   if (status != ARES_SUCCESS) {
     return status;
   }
-fprintf(stderr, "%s(): writing query %p to fd %d\n", __FUNCTION__, query, (int)conn->fd);
 
   /* Not pending a TFO write and not connected, so we can't even try to
    * write until we get a signal */
@@ -1095,7 +1020,7 @@ fprintf(stderr, "%s(): writing query %p to fd %d\n", __FUNCTION__, query, (int)c
 
   /* Unfortunately we need to write right away and can't aggregate multiple
    * queries into a single write. */
-  return ares__conn_flush(conn, ARES_TRUE);
+  return ares__conn_flush(conn);
 }
 
 ares_status_t ares__send_query(ares_query_t *query, const ares_timeval_t *now)
