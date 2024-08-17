@@ -349,7 +349,7 @@ static void ares_notify_write(ares_conn_t *conn)
   if (!(conn->flags & ARES_CONN_FLAG_TFO_INITIAL)) {
     conn->state_flags |= ARES_CONN_STATE_CONNECTED;
   }
-
+fprintf(stderr, "%s(): fd=%d\n", __FUNCTION__, conn->fd);
   ares__conn_flush(conn, ARES_FALSE);
 }
 
