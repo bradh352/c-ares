@@ -948,6 +948,7 @@ done:
     ares__llist_node_claim(node);
     ares__llist_destroy(conn->queries_to_conn);
     ares__close_socket(channel, conn->fd);
+    ares__buf_cancel(conn->out_buf);
     ares_free(conn);
   } else {
     *conn_out = conn;
