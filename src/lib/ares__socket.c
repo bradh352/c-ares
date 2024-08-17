@@ -558,12 +558,12 @@ fprintf(stderr, "%s(): fd=%d, err=%d, written=%d\n", __FUNCTION__, (int)conn->fd
 
 ares_status_t ares__conn_flush(ares_conn_t *conn)
 {
-  const unsigned char *data;
-  size_t               data_len;
-  size_t               count;
-  ares_conn_err_t      err;
-  ares_status_t        status;
-  ares_bool_t          tfo = ARES_FALSE;
+  const unsigned char  *data;
+  size_t                data_len;
+  size_t                count;
+  ares_conn_err_t       err;
+  ares_status_t         status;
+  ares_bool_t           tfo = ARES_FALSE;
 
   if (conn == NULL) {
     return ARES_EFORMERR;
@@ -628,10 +628,21 @@ done:
 fprintf(stderr, "%s(): status=%d, fd=%d, flags=%d, state_flags=%d\n", __FUNCTION__, (int)status, (int)conn->fd, (int)conn->flags, (int)conn->state_flags);
 
   if (status == ARES_SUCCESS) {
+    ares_conn_state_flags_t flags = ARES_CONN_STATE_READ;
+
     /* When using TFO, the we need to enabling waiting on a write event to
      * be notified of when a connection is actually established */
-    ares__conn_sock_state_cb_update(conn, ARES_CONN_STATE_READ |
-      (tfo?ARES_CONN_STATE_WRITE:ARES_CONN_STATE_NONE));
+    if (tfo) {
+      flags |= ARES_CONN_STATE_WRITE;
+    }
+
+    /* If using TCP and not all data was written (partial write), that means
+     * we need to also wait on a write event */
+    if (conn->flags & ARES_CONN_FLAG_TCP && ares__buf_len(conn->out_buf)) {
+      flags |= ARES_CONN_STATE_WRITE;
+    }
+
+    ares__conn_sock_state_cb_update(conn, flags);
   }
 
   return status;
