@@ -827,6 +827,7 @@ ares_status_t ares__open_connection(ares_conn_t   **conn_out,
   ares_conn_t            *conn;
   ares__llist_node_t     *node  = NULL;
   int                     stype = is_tcp ? SOCK_STREAM : SOCK_DGRAM;
+  ares_conn_state_flags_t state_flags;
 
   *conn_out = NULL;
 
@@ -935,9 +936,19 @@ ares_status_t ares__open_connection(ares_conn_t   **conn_out,
     /* LCOV_EXCL_STOP */
   }
 
-  ares__conn_sock_state_cb_update(
-    conn, ARES_CONN_STATE_READ |
-            (is_tcp ? ARES_CONN_STATE_WRITE : ARES_CONN_STATE_NONE));
+  state_flags = ARES_CONN_STATE_READ;
+
+  /* Get notified on connect if using TCP without TFO with a write event.
+   * If TFO is enabled, the write operation itself will turn this on.  We don't
+   * want to prematurely turn on waiting on a write event because of the delayed
+   * flushing that can occur for TCP, that operation will enable waiting on the
+   * write event */
+  if (conn->flags & ARES_CONN_FLAG_TCP &&
+      !(conn->flags & ARES_CONN_FLAG_TFO_INITIAL)) {
+    state_flags |= ARES_CONN_STATE_WRITE;
+  }
+
+  ares__conn_sock_state_cb_update(conn, state_flags);
 
   if (is_tcp) {
     server->tcp_conn = conn;

@@ -301,6 +301,8 @@ fprintf(stderr, "%s(): fd=%d wrote %d bytes\n", __FUNCTION__, (int)conn->fd, (in
 
 done:
   if (status == ARES_SUCCESS) {
+    /* When using TFO, the we need to enabling waiting on a write event to
+     * be notified of when a connection is actually established */
     ares__conn_sock_state_cb_update(conn, ARES_CONN_STATE_READ |
       (tfo?ARES_CONN_STATE_WRITE:ARES_CONN_STATE_NONE));
   }
