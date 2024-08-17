@@ -388,14 +388,13 @@ static void read_tcp_data(ares_channel_t *channel, ares_conn_t *conn,
                           const ares_timeval_t *now)
 {
   size_t          count;
-  ares_server_t  *server = conn->server;
   ares_conn_err_t err;
 
   /* Fetch buffer to store data we are reading */
   size_t          ptr_len = 65535;
   unsigned char  *ptr;
 
-  ptr = ares__buf_append_start(server->tcp_parser, &ptr_len);
+  ptr = ares__buf_append_start(conn->in_buf, &ptr_len);
 
   if (ptr == NULL) {
     handle_conn_error(conn, ARES_FALSE /* not critical to connection */,
@@ -408,7 +407,7 @@ static void read_tcp_data(ares_channel_t *channel, ares_conn_t *conn,
   err = ares__conn_read(conn, ptr, ptr_len, &count);
 
   if (err != ARES_CONN_ERR_SUCCESS) {
-    ares__buf_append_finish(server->tcp_parser, 0);
+    ares__buf_append_finish(conn->in_buf, 0);
     if (err != ARES_CONN_ERR_WOULDBLOCK) {
       handle_conn_error(conn, ARES_TRUE, ARES_ECONNREFUSED);
     }
@@ -416,7 +415,7 @@ static void read_tcp_data(ares_channel_t *channel, ares_conn_t *conn,
   }
 
   /* Record amount of data read */
-  ares__buf_append_finish(server->tcp_parser, (size_t)count);
+  ares__buf_append_finish(conn->in_buf, (size_t)count);
 
   /* Process all queued answers */
   while (1) {
@@ -426,24 +425,24 @@ static void read_tcp_data(ares_channel_t *channel, ares_conn_t *conn,
     ares_status_t        status;
 
     /* Tag so we can roll back */
-    ares__buf_tag(server->tcp_parser);
+    ares__buf_tag(conn->in_buf);
 
     /* Read length indicator */
-    if (ares__buf_fetch_be16(server->tcp_parser, &dns_len) != ARES_SUCCESS) {
-      ares__buf_tag_rollback(server->tcp_parser);
+    if (ares__buf_fetch_be16(conn->in_buf, &dns_len) != ARES_SUCCESS) {
+      ares__buf_tag_rollback(conn->in_buf);
       break;
     }
 
     /* Not enough data for a full response yet */
-    if (ares__buf_consume(server->tcp_parser, dns_len) != ARES_SUCCESS) {
-      ares__buf_tag_rollback(server->tcp_parser);
+    if (ares__buf_consume(conn->in_buf, dns_len) != ARES_SUCCESS) {
+      ares__buf_tag_rollback(conn->in_buf);
       break;
     }
 
     /* Can't fail except for misuse */
-    data = ares__buf_tag_fetch(server->tcp_parser, &data_len);
+    data = ares__buf_tag_fetch(conn->in_buf, &data_len);
     if (data == NULL || data_len < 2) {
-      ares__buf_tag_clear(server->tcp_parser);
+      ares__buf_tag_clear(conn->in_buf);
       break;
     }
 
@@ -459,7 +458,7 @@ static void read_tcp_data(ares_channel_t *channel, ares_conn_t *conn,
     }
 
     /* Since we processed the answer, clear the tag so space can be reclaimed */
-    ares__buf_tag_clear(server->tcp_parser);
+    ares__buf_tag_clear(conn->in_buf);
   }
 }
 

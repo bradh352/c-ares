@@ -194,6 +194,12 @@ struct ares_conn {
    *  be sent per-packet (stripping the length prefix) */
   ares__buf_t            *out_buf;
 
+  /*! Inbound buffered data that is not yet parsed.  Exists as one contiguous
+   *  stream in TCP format (big endian 16bit length prefix followed by DNS
+   *  wire-format message).  TCP may have partial data and this needs to be
+   *  handled gracefully, but UDP will always have a full message */
+  ares__buf_t            *in_buf;
+
   /* total number of queries run on this connection since it was established */
   size_t                  total_queries;
 
@@ -288,10 +294,6 @@ struct ares_server {
 
   /* The next time when we will retry this server if it has hit failures */
   ares_timeval_t        next_retry_time;
-
-  /* TCP buffer since multiple responses can come back in one read, or partial
-   * in a read */
-  ares__buf_t          *tcp_parser;
 
   /*! Buckets for collecting metrics about the server */
   ares_server_metrics_t metrics[ARES_METRIC_COUNT];

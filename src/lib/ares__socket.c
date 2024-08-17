@@ -935,8 +935,10 @@ fprintf(stderr, "%s(): %s\n", __FUNCTION__, is_tcp?"tcp":"udp");
   conn->queries_to_conn = ares__llist_create(NULL);
   conn->flags           = is_tcp ? ARES_CONN_FLAG_TCP : ARES_CONN_FLAG_NONE;
   conn->out_buf         = ares__buf_create();
+  conn->in_buf          = ares__buf_create();
 
-  if (conn->queries_to_conn == NULL || conn->out_buf == NULL) {
+  if (conn->queries_to_conn == NULL || conn->out_buf == NULL ||
+      conn->in_buf == NULL) {
     /* LCOV_EXCL_START: OutOfMemory */
     status = ARES_ENOMEM;
     goto done;
@@ -1054,6 +1056,7 @@ done:
     ares__llist_destroy(conn->queries_to_conn);
     ares__close_socket(channel, conn->fd);
     ares__buf_destroy(conn->out_buf);
+    ares__buf_destroy(conn->in_buf);
     ares_free(conn);
   } else {
     *conn_out = conn;

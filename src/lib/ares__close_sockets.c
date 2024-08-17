@@ -45,19 +45,18 @@ void ares__close_connection(ares_conn_t *conn, ares_status_t requeue_status)
 {
   ares_server_t  *server  = conn->server;
   ares_channel_t *channel = server->channel;
-
+fprintf(stderr, "%s(): close fd=%d\n", __FUNCTION__, (int)conn->fd);
   /* Unlink */
   ares__llist_node_claim(
     ares__htable_asvp_get_direct(channel->connnode_by_socket, conn->fd));
   ares__htable_asvp_remove(channel->connnode_by_socket, conn->fd);
 
-  ares__buf_destroy(conn->out_buf);
-
   if (conn->flags & ARES_CONN_FLAG_TCP) {
-    /* Reset any existing input and output buffer. */
-    ares__buf_consume(server->tcp_parser, ares__buf_len(server->tcp_parser));
     server->tcp_conn = NULL;
   }
+
+  ares__buf_destroy(conn->in_buf);
+  ares__buf_destroy(conn->out_buf);
 
   /* Requeue queries to other connections */
   ares__requeue_queries(conn, requeue_status);
