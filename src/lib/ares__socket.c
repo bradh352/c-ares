@@ -529,19 +529,18 @@ ares_conn_err_t ares__conn_write(ares_conn_t *conn, const void *data,
   goto done;
 
 done:
-  if (conn->flags & ARES_CONN_FLAG_TCP) {
-    if (err == ARES_CONN_ERR_SUCCESS && len == *written) {
-      /* Wrote all data, make sure we're not listening for write events unless
-       * using TFO, in which case we'll need a write event to know when
-       * we're connected. */
-      ares__conn_sock_state_cb_update(
-        conn, ARES_CONN_STATE_READ |
-                (is_tfo ? ARES_CONN_STATE_WRITE : ARES_CONN_STATE_NONE));
-    } else if (err == ARES_CONN_ERR_WOULDBLOCK) {
-      /* Need to wait on more buffer space to write */
-      ares__conn_sock_state_cb_update(conn, ARES_CONN_STATE_READ |
-                                              ARES_CONN_STATE_WRITE);
-    }
+fprintf(stderr, "%s(): fd=%d, err=%d, written=%d\n", __FUNCTION__, (int)conn->fd, (int)err, (int)*written);
+  if (err == ARES_CONN_ERR_SUCCESS && len == *written) {
+    /* Wrote all data, make sure we're not listening for write events unless
+     * using TFO, in which case we'll need a write event to know when
+     * we're connected. */
+    ares__conn_sock_state_cb_update(
+      conn, ARES_CONN_STATE_READ |
+              (is_tfo ? ARES_CONN_STATE_WRITE : ARES_CONN_STATE_NONE));
+  } else if (err == ARES_CONN_ERR_WOULDBLOCK) {
+    /* Need to wait on more buffer space to write */
+    ares__conn_sock_state_cb_update(conn, ARES_CONN_STATE_READ |
+                                            ARES_CONN_STATE_WRITE);
   }
 
   return err;
@@ -616,6 +615,8 @@ ares_status_t ares__conn_flush(ares_conn_t *conn)
   } while (!(conn->flags & ARES_CONN_FLAG_TCP));
 
 done:
+fprintf(stderr, "%s(): status=%d, fd=%d, flags=%d, state_flags=%d\n", __FUNCTION__, (int)status, (int)conn->fd, (int)conn->flags, (int)conn->state_flags);
+
   if (status == ARES_SUCCESS) {
     /* When using TFO, the we need to enabling waiting on a write event to
      * be notified of when a connection is actually established */
