@@ -90,9 +90,9 @@ void ares__dns_multistring_destroy(ares__dns_multistring_t *strs)
   ares_free(strs);
 }
 
-ares_status_t ares__dns_multistring_replace_own(ares__dns_multistring_t *strs,
-                                                size_t idx, unsigned char *str,
-                                                size_t len)
+ares_status_t ares__dns_multistring_swap_own(ares__dns_multistring_t *strs,
+                                             size_t idx, unsigned char *str,
+                                             size_t len)
 {
   multistring_data_t *data;
 
@@ -181,7 +181,7 @@ const unsigned char *
 }
 
 const unsigned char *
-  ares__dns_multistring_get_combined(ares__dns_multistring_t *strs, size_t *len)
+  ares__dns_multistring_combined(ares__dns_multistring_t *strs, size_t *len)
 {
   ares__buf_t *buf = NULL;
   size_t       i;
@@ -292,4 +292,3 @@ ares_status_t ares__dns_multistring_parse_buf(ares__buf_t *buf,
 
   return status;
 }
-

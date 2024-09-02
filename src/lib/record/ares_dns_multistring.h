@@ -34,9 +34,9 @@ typedef struct ares__dns_multistring ares__dns_multistring_t;
 ares__dns_multistring_t             *ares__dns_multistring_create(void);
 void          ares__dns_multistring_clear(ares__dns_multistring_t *strs);
 void          ares__dns_multistring_destroy(ares__dns_multistring_t *strs);
-ares_status_t ares__dns_multistring_replace_own(ares__dns_multistring_t *strs,
-                                                size_t idx, unsigned char *str,
-                                                size_t len);
+ares_status_t ares__dns_multistring_swap_own(ares__dns_multistring_t *strs,
+                                             size_t idx, unsigned char *str,
+                                             size_t len);
 ares_status_t ares__dns_multistring_del(ares__dns_multistring_t *strs,
                                         size_t                   idx);
 ares_status_t ares__dns_multistring_add_own(ares__dns_multistring_t *strs,
@@ -46,8 +46,7 @@ const unsigned char *
   ares__dns_multistring_get(const ares__dns_multistring_t *strs, size_t idx,
                             size_t *len);
 const unsigned char *
-  ares__dns_multistring_get_combined(ares__dns_multistring_t *strs,
-                                     size_t                  *len);
+  ares__dns_multistring_combined(ares__dns_multistring_t *strs, size_t *len);
 
 /*! Parse an array of character strings as defined in RFC1035, as binary,
  *  however, for convenience this does guarantee a NULL terminator (that is

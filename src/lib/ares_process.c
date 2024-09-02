@@ -45,13 +45,13 @@
 #include <limits.h>
 
 
-static void          timeadd(ares_timeval_t *now, size_t millisecs);
-static void          process_write(ares_channel_t *channel, fd_set *write_fds,
-                                   ares_socket_t write_fd);
-static void          process_read(ares_channel_t *channel, fd_set *read_fds,
-                                  ares_socket_t read_fd, const ares_timeval_t *now);
-static void          process_timeouts(ares_channel_t       *channel,
-                                      const ares_timeval_t *now);
+static void timeadd(ares_timeval_t *now, size_t millisecs);
+static void process_write(const ares_channel_t *channel, fd_set *write_fds,
+                          ares_socket_t write_fd);
+static void process_read(const ares_channel_t *channel, fd_set *read_fds,
+                         ares_socket_t read_fd, const ares_timeval_t *now);
+static void process_timeouts(ares_channel_t       *channel,
+                             const ares_timeval_t *now);
 static ares_status_t process_answer(ares_channel_t      *channel,
                                     const unsigned char *abuf, size_t alen,
                                     ares_conn_t          *conn,
@@ -64,7 +64,7 @@ static void        end_query(ares_channel_t *channel, ares_server_t *server,
                              ares_query_t *query, ares_status_t status,
                              const ares_dns_record_t *dnsrec);
 
-static void        ares__query_disassociate_from_conn(ares_query_t *query)
+static void        ares__query_remove_from_conn(ares_query_t *query)
 {
   /* If its not part of a connection, it can't be tracked for timeouts either */
   ares__slist_node_destroy(query->node_queries_by_timeout);
@@ -287,7 +287,7 @@ static void ares_notify_write(ares_conn_t *conn)
   }
 }
 
-static void process_write(ares_channel_t *channel, fd_set *write_fds,
+static void process_write(const ares_channel_t *channel, fd_set *write_fds,
                           ares_socket_t write_fd)
 {
   size_t              i;
@@ -382,9 +382,9 @@ void ares_process_pending_write(ares_channel_t *channel)
 
 static ares_status_t read_conn_packets(ares_conn_t *conn)
 {
-  ares_bool_t     read_again;
-  ares_conn_err_t err;
-  ares_channel_t *channel = conn->server->channel;
+  ares_bool_t           read_again;
+  ares_conn_err_t       err;
+  const ares_channel_t *channel = conn->server->channel;
 
   do {
     size_t         count;
@@ -393,12 +393,11 @@ static ares_status_t read_conn_packets(ares_conn_t *conn)
     size_t         start_len = ares__buf_len(conn->in_buf);
 
     /* If UDP, lets write out a placeholder for the length indicator */
-    if (!(conn->flags & ARES_CONN_FLAG_TCP)) {
-      if (ares__buf_append_be16(conn->in_buf, 0) != ARES_SUCCESS) {
-        handle_conn_error(conn, ARES_FALSE /* not critical to connection */,
-                          ARES_SUCCESS);
-        return ARES_ENOMEM;
-      }
+    if (!(conn->flags & ARES_CONN_FLAG_TCP) &&
+        ares__buf_append_be16(conn->in_buf, 0) != ARES_SUCCESS) {
+      handle_conn_error(conn, ARES_FALSE /* not critical to connection */,
+                        ARES_SUCCESS);
+      return ARES_ENOMEM;
     }
 
     /* Get a buffer of sufficient size */
@@ -422,7 +421,7 @@ static ares_status_t read_conn_packets(ares_conn_t *conn)
     }
 
     /* Record amount of data read */
-    ares__buf_append_finish(conn->in_buf, (size_t)count);
+    ares__buf_append_finish(conn->in_buf, count);
 
     /* Only loop if we're not overwriting socket functions, and are using UDP
      * or are using TCP and read the maximum buffer size */
@@ -516,7 +515,7 @@ static void read_conn(ares_conn_t *conn, const ares_timeval_t *now)
   read_answers(conn, now);
 }
 
-static void process_read(ares_channel_t *channel, fd_set *read_fds,
+static void process_read(const ares_channel_t *channel, fd_set *read_fds,
                          ares_socket_t read_fd, const ares_timeval_t *now)
 {
   size_t              i;
@@ -793,7 +792,7 @@ ares_status_t ares__requeue_query(ares_query_t            *query,
   ares_channel_t *channel = query->channel;
   size_t max_tries        = ares__slist_len(channel->servers) * channel->tries;
 
-  ares__query_disassociate_from_conn(query);
+  ares__query_remove_from_conn(query);
 
   if (status != ARES_SUCCESS) {
     query->error_status = status;
@@ -1105,8 +1104,6 @@ ares_status_t ares__send_query(ares_query_t *query, const ares_timeval_t *now)
       }
       return status;
 
-    /* FIXME: Handle EAGAIN here since it likely can happen. Right now we
-     * just requeue to a different server/connection. */
     default:
       server_increment_failures(server, query->using_tcp);
       status = ares__requeue_query(query, now, status, ARES_TRUE, NULL);
@@ -1212,7 +1209,7 @@ done:
 static void ares_detach_query(ares_query_t *query)
 {
   /* Remove the query from all the lists in which it is linked */
-  ares__query_disassociate_from_conn(query);
+  ares__query_remove_from_conn(query);
   ares__htable_szvp_remove(query->channel->queries_by_qid, query->qid);
   ares__llist_node_destroy(query->node_all_queries);
   query->node_all_queries = NULL;

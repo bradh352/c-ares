@@ -95,8 +95,8 @@ static ares_status_t
   ares_status_t            status;
   ares__dns_multistring_t *strs = NULL;
 
-  status = ares__dns_multistring_parse_buf(buf, max_len, &strs,
-                                           validate_printable);
+  status =
+    ares__dns_multistring_parse_buf(buf, max_len, &strs, validate_printable);
   if (status != ARES_SUCCESS) {
     return status;
   }
@@ -1140,7 +1140,7 @@ static ares_status_t ares_dns_parse_rr(ares__buf_t *buf, unsigned int flags,
     type = ARES_REC_TYPE_RAW_RR;
   }
 
-  namecomp = ares_dns_rec_type_allow_name_compression(type);
+  namecomp = ares_dns_rec_allow_name_comp(type);
   if (sect == ARES_SECTION_ANSWER &&
       (flags &
        (namecomp ? ARES_DNS_PARSE_AN_BASE_RAW : ARES_DNS_PARSE_AN_EXT_RAW))) {

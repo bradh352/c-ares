@@ -12,7 +12,7 @@ INCLUDE (CheckCSourceCompiles)
 INCLUDE (CheckStructHasMember)
 INCLUDE (CheckLibraryExists)
 
-PROJECT (c-ares LANGUAGES C VERSION "1.33.0" )
+PROJECT (c-ares LANGUAGES C VERSION "1.33.1" )
 
 # Set this version before release
 SET (CARES_VERSION "${PROJECT_VERSION}")
@@ -30,7 +30,7 @@ INCLUDE (GNUInstallDirs) # include this *AFTER* PROJECT(), otherwise paths are w
 # For example, a version of 4:0:2 would generate output such as:
 #    libname.so   -> libname.so.2
 #    libname.so.2 -> libname.so.2.2.0
-SET (CARES_LIB_VERSIONINFO "20:0:18")
+SET (CARES_LIB_VERSIONINFO "20:1:18")
 
 
 OPTION (CARES_STATIC        "Build as a static library"                                             OFF)
@@ -765,7 +765,6 @@ IF (CARES_BUILD_TESTS OR CARES_BUILD_CONTAINER_TESTS)
 	ADD_SUBDIRECTORY (test)
 ENDIF ()
 
-
 # Export targets
 IF (CARES_INSTALL)
 	SET (CMAKECONFIG_INSTALL_DIR "${CMAKE_INSTALL_LIBDIR}/cmake/${PROJECT_NAME}")
@@ -788,7 +787,6 @@ IF (CARES_INSTALL)
 	CONFIGURE_FILE("libcares.pc.cmake" "libcares.pc" @ONLY)
 	INSTALL (FILES "${CMAKE_CURRENT_BINARY_DIR}/libcares.pc" COMPONENT Devel DESTINATION "${CMAKE_INSTALL_LIBDIR}/pkgconfig")
 ENDIF ()
-
 
 # Legacy chain-building variables (provided for compatibility with old code).
 # Don't use these, external code should be updated to refer to the aliases directly (e.g., Cares::cares).
