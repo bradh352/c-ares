@@ -48,18 +48,29 @@ struct ares_crypto_ctx {
 
 typedef enum {
   ARES_OSSL_STATE_INIT         = 0, /*!< Not tried to write any data */
-  ARES_OSSL_STATE_CONNECT      = 1, /*!< Last action was connect */
-  ARES_OSSL_STATE_ESTABLISHED  = 2,
-  ARES_OSSL_STATE_SHUTDOWN     = 4, /*!< Last action was shutdown */
+  ARES_OSSL_STATE_CONNECT      = 1, /*!< Connection in progress */
+  ARES_OSSL_STATE_ESTABLISHED  = 2, /*!< Connection established */
+  ARES_OSSL_STATE_SHUTDOWN     = 4, /*!< Shutdown in progress */
   ARES_OSSL_STATE_DISCONNECTED = 5, /*!< Disconnected */
   ARES_OSSL_STATE_ERROR        = 6  /*!< Error */
 } ares_ossl_state_t;
 
+typedef enum {
+  ARES_OSSL_FLAG_READ_WANTREAD   = 1 << 0,
+  ARES_OSSL_FLAG_READ_WANTWRITE  = 1 << 1,
+  ARES_OSSL_FLAG_READ            = (ARES_OSSL_FLAG_READ_WANTREAD | ARES_OSSL_FLAG_READ_WANTWRITE),
+  ARES_OSSL_FLAG_WRITE_WANTREAD  = 1 << 2,
+  ARES_OSSL_FLAG_WRITE_WANTWRITE = 1 << 3,
+  ARES_OSSL_FLAG_WRITE           = (ARES_OSSL_FLAG_WRITE_WANTREAD | ARES_OSSL_FLAG_WRITE_WANTWRITE)
+} ares_ossl_flag_t;
+
 struct ares_tls {
-  ares_conn_t      *conn;
-  SSL              *ssl;
-  ares_conn_err_t   last_io_error;
-  ares_ossl_state_t state;
+  ares_conn_t       *conn;
+  ares_crypto_ctx_t *ctx;
+  SSL               *ssl;
+  ares_conn_err_t    last_io_error;
+  ares_ossl_state_t  state;
+  ares_ossl_flag_t   flags;
 };
 
 #  if defined(__APPLE__)
@@ -378,13 +389,13 @@ static BIO_METHOD *ares_ossl_create_bio_method(void)
 static int ares_ossl_sslsess_new_cb(SSL *ssl, SSL_SESSION *sess)
 {
   ares_tls_t        *tls        = SSL_get_app_data(ssl);
-  ares_crypto_ctx_t *crypto_ctx = NULL;
+  ares_crypto_ctx_t *crypto_ctx;
 
   if (tls == NULL || tls->conn == NULL) {
     return 0;
   }
 
-  crypto_ctx = tls->conn->server->channel->crypto_ctx;
+  crypto_ctx = tls->ctx;
 
   /* XXX: insert session */
 
@@ -442,6 +453,9 @@ ares_status_t ares_crypto_ctx_init(ares_crypto_ctx_t **ctx)
   SSL_CTX_set_min_proto_version((*ctx)->sslctx, TLS1_2_VERSION);
   SSL_CTX_set_session_cache_mode((*ctx)->sslctx, SSL_SESS_CACHE_CLIENT);
   SSL_CTX_set_security_level((*ctx)->sslctx, 3);
+  SSL_CTX_set_mode((*ctx)->sslctx, SSL_MODE_ENABLE_PARTIAL_WRITE|
+                                   SSL_MODE_ACCEPT_MOVING_WRITE_BUFFER|
+                                   SSL_MODE_AUTO_RETRY);
   SSL_CTX_set_verify((*ctx)->sslctx,
                      SSL_VERIFY_PEER | SSL_VERIFY_FAIL_IF_NO_PEER_CERT, NULL);
   SSL_CTX_sess_set_new_cb((*ctx)->sslctx, ares_ossl_sslsess_new_cb);
@@ -465,26 +479,26 @@ done:
 }
 
 
-void *ares_crypto_tls_get_session(ares_conn_t *conn)
+void *ares_crypto_tls_get_session(ares_crypto_ctx_t *crypto_ctx,
+                                  ares_conn_t *conn)
 {
   /* TODO: Implement me */
   return NULL;
 }
 
 
-ares_status_t ares_crypto_tls_create(ares_tls_t **tls, ares_conn_t *conn)
+ares_status_t ares_tlsimp_create(ares_tls_t **tls,
+                                 ares_crypto_ctx_t *crypto_ctx,
+                                 ares_conn_t *conn)
 {
   ares_status_t      status     = ARES_SUCCESS;
   ares_tls_t        *state      = NULL;
   BIO               *bio        = NULL;
   SSL_SESSION       *sess       = NULL;
-  ares_crypto_ctx_t *crypto_ctx = NULL;
 
   if (tls == NULL || conn == NULL) {
     return ARES_EFORMERR;
   }
-
-  crypto_ctx = conn->server->channel->crypto_ctx;
 
   state = ares_malloc_zero(sizeof(*state));
   if (state == NULL) {
@@ -494,6 +508,7 @@ ares_status_t ares_crypto_tls_create(ares_tls_t **tls, ares_conn_t *conn)
 
   state->state = ARES_OSSL_STATE_INIT;
   state->conn  = conn;
+  state->ctx   = crypto_ctx;
 
   state->ssl = SSL_new(crypto_ctx->sslctx);
   if (state->ssl == NULL) {
@@ -516,7 +531,7 @@ ares_status_t ares_crypto_tls_create(ares_tls_t **tls, ares_conn_t *conn)
   //SSL_set_tlsext_host_name(state->ssl, conn->hostname);
 
   /* Session handling */
-  sess = ares_crypto_tls_get_session(conn);
+  sess = ares_crypto_tls_get_session(crypto_ctx, conn);
   if (sess != NULL) {
     if (SSL_set_session(state->ssl, sess) == 0) {
       status = ARES_ESERVFAIL;
@@ -544,28 +559,46 @@ done:
   return ARES_SUCCESS;
 }
 
-ares_conn_err_t ares_crypto_tls_shutdown(ares_tls_t *tls)
+void ares_tlsimp_destroy(ares_tls_t *tls)
 {
-  int rv;
-  int err;
-
   if (tls == NULL) {
-    return ARES_CONN_ERR_FAILURE;
+    return;
+  }
+  SSL_free(tls->ssl);
+  ares_free(tls);
+}
+
+
+ares_conn_err_t ares_tlsimp_connect(ares_tls_t *tls)
+{
+  int            rv;
+  int            err;
+
+  if (tls == NULL || (
+        tls->state != ARES_OSSL_STATE_INIT &&
+        tls->state != ARES_OSSL_STATE_CONNECT)
+     ) {
+    return ARES_CONN_ERR_INVALID;
   }
 
-  if (tls->state != ARES_OSSL_STATE_ESTABLISHED && tls->state != ARES_OSSL_STATE_SHUTDOWN) {
-    return ARES_CONN_ERR_FAILURE;
+  tls->state = ARES_OSSL_STATE_CONNECT;
+
+  rv = SSL_connect(tls->ssl);
+  if (rv == 0) {
+    tls->state = ARES_OSSL_STATE_ERROR;
+    return ARES_CONN_ERR_CONNREFUSED;
   }
 
-  rv = SSL_shutdown(tls->ssl);
-  if (rv >= 0) {
-    tls->state = ARES_OSSL_STATE_DISCONNECTED;
+  if (rv == 1) {
+    tls->state = ARES_OSSL_STATE_ESTABLISHED;
+
+    /* XXX: Get early data result SSL_write_early_data(), need to requeue
+     * early data if not already sent */
     return ARES_CONN_ERR_SUCCESS;
   }
 
   err = SSL_get_error(tls->ssl, rv);
   if (err == SSL_ERROR_WANT_READ || err == SSL_ERROR_WANT_WRITE) {
-    tls->state = ARES_OSSL_STATE_SHUTDOWN; /* Need to repeat call */
     return ARES_CONN_ERR_WOULDBLOCK;
   }
 
@@ -576,6 +609,122 @@ ares_conn_err_t ares_crypto_tls_shutdown(ares_tls_t *tls)
   return tls->last_io_error;
 }
 
+ares_conn_err_t ares_tlsimp_shutdown(ares_tls_t *tls)
+{
+  int rv;
+  int err;
+
+  if (tls == NULL || (
+        tls->state != ARES_OSSL_STATE_ESTABLISHED &&
+        tls->state != ARES_OSSL_STATE_SHUTDOWN)
+     ) {
+    return ARES_CONN_ERR_INVALID;
+  }
+
+  tls->state = ARES_OSSL_STATE_SHUTDOWN;
+
+  rv = SSL_shutdown(tls->ssl);
+  if (rv >= 0) {
+    tls->state = ARES_OSSL_STATE_DISCONNECTED;
+    return ARES_CONN_ERR_SUCCESS;
+  }
+
+  err = SSL_get_error(tls->ssl, rv);
+  if (err == SSL_ERROR_WANT_READ || err == SSL_ERROR_WANT_WRITE) {
+    return ARES_CONN_ERR_WOULDBLOCK;
+  }
+
+  tls->state = ARES_OSSL_STATE_ERROR;
+  if (tls->last_io_error == ARES_CONN_ERR_SUCCESS) {
+    tls->last_io_error = ARES_CONN_ERR_CONNRESET;
+  }
+  return tls->last_io_error;
+}
+
+ares_conn_err_t ares_tlsimp_write(ares_tls_t *tls, const unsigned char *buf,
+                                  size_t *buf_len)
+{
+  int            rv;
+  int            err;
+
+  if (tls == NULL ||
+        (tls->state != ARES_OSSL_STATE_INIT &&
+         tls->state != ARES_OSSL_STATE_ESTABLISHED)
+     ) {
+    return ARES_CONN_ERR_INVALID;
+  }
+
+  if (tls->state == ARES_OSSL_STATE_INIT) {
+    /* XXX: Write TLS Early Data here ... also this may return partial writes
+     * with needing to retry just like SSL_write_ex(), so we'll need to repeat.
+     * Also length should be capped at max of 1280 and the session early data
+     * size.
+     */
+
+    /* Implicit connect */
+    return ares_tlsimp_connect(tls);
+  }
+
+
+  tls->flags &= ~((unsigned int)ARES_OSSL_FLAG_WRITE);
+
+  /* XXX: Repeats of write should send same length!!!! */
+
+  rv = SSL_write_ex(tls->ssl, buf, *buf_len, buf_len);
+  if (rv == 1) {
+    return ARES_CONN_ERR_SUCCESS;
+  }
+
+  err = SSL_get_error(tls->ssl, rv);
+  if (err == SSL_ERROR_WANT_READ) {
+    tls->flags |= ARES_OSSL_FLAG_WRITE_WANTREAD;
+    return ARES_CONN_ERR_WOULDBLOCK;
+  }
+  if (err == SSL_ERROR_WANT_WRITE) {
+    tls->flags |= ARES_OSSL_FLAG_WRITE_WANTWRITE;
+    return ARES_CONN_ERR_WOULDBLOCK;
+  }
+
+  tls->state = ARES_OSSL_STATE_ERROR;
+  if (tls->last_io_error == ARES_CONN_ERR_SUCCESS) {
+    tls->last_io_error = ARES_CONN_ERR_CONNRESET;
+  }
+  return tls->last_io_error;
+}
+
+ares_conn_err_t ares_tlsimp_read(ares_tls_t *tls, unsigned char *buf,
+                                 size_t *buf_len)
+{
+  int            rv;
+  int            err;
+
+  if (tls == NULL || tls->state != ARES_OSSL_STATE_ESTABLISHED) {
+    return ARES_CONN_ERR_INVALID;
+  }
+
+  tls->flags &= ~((unsigned int)ARES_OSSL_FLAG_READ);
+
+  rv = SSL_read_ex(tls->ssl, buf, *buf_len, buf_len);
+  if (rv == 1) {
+    return ARES_CONN_ERR_SUCCESS;
+  }
+
+  err = SSL_get_error(tls->ssl, rv);
+  if (err == SSL_ERROR_WANT_READ) {
+    tls->flags |= ARES_OSSL_FLAG_READ_WANTREAD;
+    return ARES_CONN_ERR_WOULDBLOCK;
+  }
+  if (err == SSL_ERROR_WANT_WRITE) {
+    tls->flags |= ARES_OSSL_FLAG_READ_WANTWRITE;
+    return ARES_CONN_ERR_WOULDBLOCK;
+  }
+
+  tls->state = ARES_OSSL_STATE_ERROR;
+  if (tls->last_io_error == ARES_CONN_ERR_SUCCESS) {
+    tls->last_io_error = ARES_CONN_ERR_CONNRESET;
+  }
+  return tls->last_io_error;
+}
 
 
 

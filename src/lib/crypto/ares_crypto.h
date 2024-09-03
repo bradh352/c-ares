@@ -35,14 +35,18 @@ void                           ares_crypto_ctx_destroy(ares_crypto_ctx_t *ctx);
 struct ares_tls;
 typedef struct ares_tls ares_tls_t;
 
-#if 0
-ares_tls_t *ares_tls_create(ares_conn_t *conn);
-ares_tls_destroy
+/* TLS Provider-specific primitive implementations */
 
-ares_tls_connect(ares_tls_t *tls);
-ares_tls_read(ares_tls_t *tls, unsigned char *buf, size_t *buf_len);
-ares_tls_write(ares_tls_t *tls, const unsigned char *buf, size_t *buf_len);
-ares_tls_shutdown(ares_tls_t *tls);
-#endif
+ares_status_t ares_tlsimp_create(ares_tls_t **tls,
+                                 ares_crypto_ctx_t *crypto_ctx,
+                                 ares_conn_t *conn);
+void ares_tlsimp_destroy(ares_tls_t *tls);
+ares_conn_err_t ares_tlsimp_read(ares_tls_t *tls, unsigned char *buf,
+                                 size_t *buf_len);
+ares_conn_err_t ares_tlsimp_write(ares_tls_t *tls, const unsigned char *buf,
+                                  size_t *buf_len);
+ares_conn_err_t ares_tlsimp_shutdown(ares_tls_t *tls);
+ares_conn_err_t ares_tlsimp_connect(ares_tls_t *tls);
+
 
 #endif
