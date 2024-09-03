@@ -47,14 +47,16 @@ struct ares_crypto_ctx {
 };
 
 typedef enum {
-  ARES_OSSL_STATE_INIT        = 0,
-  ARES_OSSL_STATE_CONNECT     = 1,
-  ARES_OSSL_STATE_ESTABLISHED = 2,
-  ARES_OSSL_STATE_SHUTDOWN    = 3,
-  ARES_OSSL_STATE_ERROR       = 4
+  ARES_OSSL_STATE_INIT         = 0, /*!< Not tried to write any data */
+  ARES_OSSL_STATE_CONNECT      = 1, /*!< Last action was connect */
+  ARES_OSSL_STATE_ESTABLISHED  = 2,
+  ARES_OSSL_STATE_SHUTDOWN     = 4, /*!< Last action was shutdown */
+  ARES_OSSL_STATE_DISCONNECTED = 5, /*!< Disconnected */
+  ARES_OSSL_STATE_ERROR        = 6  /*!< Error */
 } ares_ossl_state_t;
 
 struct ares_tls {
+  ares_conn_t      *conn;
   SSL              *ssl;
   ares_conn_err_t   last_io_error;
   ares_ossl_state_t state;
@@ -269,19 +271,17 @@ void ares_crypto_ctx_destroy(ares_crypto_ctx_t *ctx)
 static int ares_ossl_bio_read_ex(BIO *b, char *buf, size_t len,
                                  size_t *readbytes)
 {
-  ares_conn_t    *conn = BIO_get_data(b);
-  ares_conn_err_t err;
+  ares_tls_t     *tls = BIO_get_data(b);
   BIO_clear_retry_flags(b);
 
   *readbytes = 0;
 
-  /* XXX: save last_io_error */
-  err = ares__conn_read(conn, buf, len, readbytes);
-  if (err == ARES_CONN_ERR_SUCCESS) {
+  tls->last_io_error = ares__conn_read(tls->conn, buf, len, readbytes);
+  if (tls->last_io_error == ARES_CONN_ERR_SUCCESS) {
     return 1;
   }
 
-  if (err == ARES_CONN_ERR_WOULDBLOCK) {
+  if (tls->last_io_error == ARES_CONN_ERR_WOULDBLOCK) {
     /* Error is non-fatal, set the reason as need to retry read events */
     BIO_set_retry_read(b);
   }
@@ -292,18 +292,16 @@ static int ares_ossl_bio_read_ex(BIO *b, char *buf, size_t len,
 static int ares_ossl_bio_write_ex(BIO *b, const char *buf, size_t len,
                                   size_t *written)
 {
-  ares_conn_err_t err;
-  ares_conn_t    *conn = BIO_get_data(b);
+  ares_tls_t *tls = BIO_get_data(b);
 
   *written = 0;
 
-  /* XXX: save last_io_error */
-  err = ares__conn_write(conn, buf, len, written);
-  if (err == ARES_CONN_ERR_SUCCESS) {
+  tls->last_io_error = ares__conn_write(tls->conn, buf, len, written);
+  if (tls->last_io_error == ARES_CONN_ERR_SUCCESS) {
     return 1;
   }
 
-  if (err == ARES_CONN_ERR_WOULDBLOCK) {
+  if (tls->last_io_error == ARES_CONN_ERR_WOULDBLOCK) {
     /* Error is non-fatal, set the reason as need to retry read events */
     BIO_set_retry_read(b);
   }
@@ -377,6 +375,29 @@ static BIO_METHOD *ares_ossl_create_bio_method(void)
   return bio_method;
 }
 
+static int ares_ossl_sslsess_new_cb(SSL *ssl, SSL_SESSION *sess)
+{
+  ares_tls_t        *tls        = SSL_get_app_data(ssl);
+  ares_crypto_ctx_t *crypto_ctx = NULL;
+
+  if (tls == NULL || tls->conn == NULL) {
+    return 0;
+  }
+
+  crypto_ctx = tls->conn->server->channel->crypto_ctx;
+
+  /* XXX: insert session */
+
+  return 1;
+}
+
+static void ares_ossl_sslsess_remove_cb(SSL_CTX *ctx, SSL_SESSION *sess)
+{
+  ares_crypto_ctx_t *crypto_ctx = SSL_CTX_get_app_data(ctx);
+
+  /* XXX: remove session */
+}
+
 ares_status_t ares_crypto_ctx_init(ares_crypto_ctx_t **ctx)
 {
   ares_status_t status;
@@ -417,11 +438,14 @@ ares_status_t ares_crypto_ctx_init(ares_crypto_ctx_t **ctx)
   }
   fprintf(stderr, "%s(): loaded ca certificates\n", __FUNCTION__);
 
+  SSL_CTX_set_app_data((*ctx)->sslctx, *ctx);
   SSL_CTX_set_min_proto_version((*ctx)->sslctx, TLS1_2_VERSION);
   SSL_CTX_set_session_cache_mode((*ctx)->sslctx, SSL_SESS_CACHE_CLIENT);
   SSL_CTX_set_security_level((*ctx)->sslctx, 3);
   SSL_CTX_set_verify((*ctx)->sslctx,
                      SSL_VERIFY_PEER | SSL_VERIFY_FAIL_IF_NO_PEER_CERT, NULL);
+  SSL_CTX_sess_set_new_cb((*ctx)->sslctx, ares_ossl_sslsess_new_cb);
+  SSL_CTX_sess_set_remove_cb((*ctx)->sslctx, ares_ossl_sslsess_remove_cb);
 
   (*ctx)->bio_method = ares_ossl_create_bio_method();
   if ((*ctx)->bio_method == NULL) {
@@ -440,16 +464,119 @@ done:
   return status;
 }
 
-/* TLS Session stuff:
- *  Create some sort of object reference between the SSL * and the application
- *  connection context.  To do this, use SSL_set_app_data() and
- * SSL_get_app_data().
- *
- *  We also need to notify on new sessions and removed sessions with:
- *    SSL_sess_set_new_cb(ssl, new_session_cb);
- *    SSL_sess_set_remove_cb(ssl, del_session_cb);
- * SSL_set_app_data()/SSL_get_app_data()
- */
+
+void *ares_crypto_tls_get_session(ares_conn_t *conn)
+{
+  /* TODO: Implement me */
+  return NULL;
+}
+
+
+ares_status_t ares_crypto_tls_create(ares_tls_t **tls, ares_conn_t *conn)
+{
+  ares_status_t      status     = ARES_SUCCESS;
+  ares_tls_t        *state      = NULL;
+  BIO               *bio        = NULL;
+  SSL_SESSION       *sess       = NULL;
+  ares_crypto_ctx_t *crypto_ctx = NULL;
+
+  if (tls == NULL || conn == NULL) {
+    return ARES_EFORMERR;
+  }
+
+  crypto_ctx = conn->server->channel->crypto_ctx;
+
+  state = ares_malloc_zero(sizeof(*state));
+  if (state == NULL) {
+    status = ARES_ENOMEM;
+    goto done;
+  }
+
+  state->state = ARES_OSSL_STATE_INIT;
+  state->conn  = conn;
+
+  state->ssl = SSL_new(crypto_ctx->sslctx);
+  if (state->ssl == NULL) {
+    status = ARES_ENOMEM;
+    goto done;
+  }
+
+  bio = BIO_new(crypto_ctx->bio_method);
+  if (bio == NULL) {
+    status = ARES_ENOMEM;
+  }
+
+  BIO_set_data(bio, state);
+  SSL_set_bio(state->ssl, bio, bio);
+
+  /* Set hostname for peer verification */
+  //SSL_set1_host(state->ssl, conn->hostname);
+
+  /* Set the hostname for SNI */
+  //SSL_set_tlsext_host_name(state->ssl, conn->hostname);
+
+  /* Session handling */
+  sess = ares_crypto_tls_get_session(conn);
+  if (sess != NULL) {
+    if (SSL_set_session(state->ssl, sess) == 0) {
+      status = ARES_ESERVFAIL;
+      goto done;
+    }
+    /* TLS v1.3 recommends sessions only be used once */
+    SSL_CTX_remove_session(crypto_ctx->sslctx, sess);
+  }
+
+done:
+  if (status != ARES_SUCCESS) {
+    if (state == NULL) {
+      return status;
+    }
+    if (state->ssl) {
+      SSL_free(state->ssl);
+    }
+
+    ares_free(state);
+    return status;
+  }
+
+  SSL_set_app_data(state->ssl, state);
+  *tls = state;
+  return ARES_SUCCESS;
+}
+
+ares_conn_err_t ares_crypto_tls_shutdown(ares_tls_t *tls)
+{
+  int rv;
+  int err;
+
+  if (tls == NULL) {
+    return ARES_CONN_ERR_FAILURE;
+  }
+
+  if (tls->state != ARES_OSSL_STATE_ESTABLISHED && tls->state != ARES_OSSL_STATE_SHUTDOWN) {
+    return ARES_CONN_ERR_FAILURE;
+  }
+
+  rv = SSL_shutdown(tls->ssl);
+  if (rv >= 0) {
+    tls->state = ARES_OSSL_STATE_DISCONNECTED;
+    return ARES_CONN_ERR_SUCCESS;
+  }
+
+  err = SSL_get_error(tls->ssl, rv);
+  if (err == SSL_ERROR_WANT_READ || err == SSL_ERROR_WANT_WRITE) {
+    tls->state = ARES_OSSL_STATE_SHUTDOWN; /* Need to repeat call */
+    return ARES_CONN_ERR_WOULDBLOCK;
+  }
+
+  tls->state = ARES_OSSL_STATE_ERROR;
+  if (tls->last_io_error == ARES_CONN_ERR_SUCCESS) {
+    tls->last_io_error = ARES_CONN_ERR_CONNRESET;
+  }
+  return tls->last_io_error;
+}
+
+
 
 
 #endif
