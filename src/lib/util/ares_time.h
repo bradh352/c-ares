@@ -35,13 +35,13 @@ typedef struct {
 } ares_timeval_t;
 
 /* return true if now is exactly check time or later */
-ares_bool_t   ares__timedout(const ares_timeval_t *now,
-                             const ares_timeval_t *check);
+ares_bool_t ares__timedout(const ares_timeval_t *now,
+                           const ares_timeval_t *check);
 
-void           ares__tvnow(ares_timeval_t *now);
-void           ares__timeval_remaining(ares_timeval_t       *remaining,
-                                       const ares_timeval_t *now,
-                                       const ares_timeval_t *tout);
+void        ares__tvnow(ares_timeval_t *now);
+void        ares__timeval_remaining(ares_timeval_t       *remaining,
+                                    const ares_timeval_t *now,
+                                    const ares_timeval_t *tout);
 void ares__timeval_diff(ares_timeval_t *tvdiff, const ares_timeval_t *tvstart,
                         const ares_timeval_t *tvstop);
 

@@ -78,7 +78,6 @@ struct ares_conn {
   ares__llist_t          *queries_to_conn;
 };
 
-
 /*! Various buckets for grouping history */
 typedef enum {
   ARES_METRIC_1MINUTE = 0, /*!< Bucket for tracking over the last minute */
@@ -161,7 +160,6 @@ struct ares_server {
   ares_channel_t       *channel;
 };
 
-
 void ares__close_connection(ares_conn_t *conn, ares_status_t requeue_status);
 void ares__close_sockets(ares_server_t *server);
 void ares__check_cleanup_conns(const ares_channel_t *channel);
@@ -173,7 +171,6 @@ ares_status_t ares__open_connection(ares_conn_t   **conn_out,
 ares_bool_t   ares_sockaddr_to_ares_addr(struct ares_addr      *ares_addr,
                                          unsigned short        *port,
                                          const struct sockaddr *sockaddr);
-
 
 /*! Socket errors */
 typedef enum {

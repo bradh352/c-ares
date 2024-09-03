@@ -56,12 +56,14 @@ typedef enum {
 } ares_ossl_state_t;
 
 typedef enum {
-  ARES_OSSL_FLAG_READ_WANTREAD   = 1 << 0,
-  ARES_OSSL_FLAG_READ_WANTWRITE  = 1 << 1,
-  ARES_OSSL_FLAG_READ            = (ARES_OSSL_FLAG_READ_WANTREAD | ARES_OSSL_FLAG_READ_WANTWRITE),
+  ARES_OSSL_FLAG_READ_WANTREAD  = 1 << 0,
+  ARES_OSSL_FLAG_READ_WANTWRITE = 1 << 1,
+  ARES_OSSL_FLAG_READ =
+    (ARES_OSSL_FLAG_READ_WANTREAD | ARES_OSSL_FLAG_READ_WANTWRITE),
   ARES_OSSL_FLAG_WRITE_WANTREAD  = 1 << 2,
   ARES_OSSL_FLAG_WRITE_WANTWRITE = 1 << 3,
-  ARES_OSSL_FLAG_WRITE           = (ARES_OSSL_FLAG_WRITE_WANTREAD | ARES_OSSL_FLAG_WRITE_WANTWRITE)
+  ARES_OSSL_FLAG_WRITE =
+    (ARES_OSSL_FLAG_WRITE_WANTREAD | ARES_OSSL_FLAG_WRITE_WANTWRITE)
 } ares_ossl_flag_t;
 
 struct ares_tls {
@@ -282,7 +284,7 @@ void ares_crypto_ctx_destroy(ares_crypto_ctx_t *ctx)
 static int ares_ossl_bio_read_ex(BIO *b, char *buf, size_t len,
                                  size_t *readbytes)
 {
-  ares_tls_t     *tls = BIO_get_data(b);
+  ares_tls_t *tls = BIO_get_data(b);
   BIO_clear_retry_flags(b);
 
   *readbytes = 0;
@@ -388,7 +390,7 @@ static BIO_METHOD *ares_ossl_create_bio_method(void)
 
 static int ares_ossl_sslsess_new_cb(SSL *ssl, SSL_SESSION *sess)
 {
-  ares_tls_t        *tls        = SSL_get_app_data(ssl);
+  ares_tls_t        *tls = SSL_get_app_data(ssl);
   ares_crypto_ctx_t *crypto_ctx;
 
   if (tls == NULL || tls->conn == NULL) {
@@ -453,9 +455,9 @@ ares_status_t ares_crypto_ctx_init(ares_crypto_ctx_t **ctx)
   SSL_CTX_set_min_proto_version((*ctx)->sslctx, TLS1_2_VERSION);
   SSL_CTX_set_session_cache_mode((*ctx)->sslctx, SSL_SESS_CACHE_CLIENT);
   SSL_CTX_set_security_level((*ctx)->sslctx, 3);
-  SSL_CTX_set_mode((*ctx)->sslctx, SSL_MODE_ENABLE_PARTIAL_WRITE|
-                                   SSL_MODE_ACCEPT_MOVING_WRITE_BUFFER|
-                                   SSL_MODE_AUTO_RETRY);
+  SSL_CTX_set_mode((*ctx)->sslctx, SSL_MODE_ENABLE_PARTIAL_WRITE |
+                                     SSL_MODE_ACCEPT_MOVING_WRITE_BUFFER |
+                                     SSL_MODE_AUTO_RETRY);
   SSL_CTX_set_verify((*ctx)->sslctx,
                      SSL_VERIFY_PEER | SSL_VERIFY_FAIL_IF_NO_PEER_CERT, NULL);
   SSL_CTX_sess_set_new_cb((*ctx)->sslctx, ares_ossl_sslsess_new_cb);
@@ -478,23 +480,21 @@ done:
   return status;
 }
 
-
 void *ares_crypto_tls_get_session(ares_crypto_ctx_t *crypto_ctx,
-                                  ares_conn_t *conn)
+                                  ares_conn_t       *conn)
 {
   /* TODO: Implement me */
   return NULL;
 }
 
-
-ares_status_t ares_tlsimp_create(ares_tls_t **tls,
+ares_status_t ares_tlsimp_create(ares_tls_t       **tls,
                                  ares_crypto_ctx_t *crypto_ctx,
-                                 ares_conn_t *conn)
+                                 ares_conn_t       *conn)
 {
-  ares_status_t      status     = ARES_SUCCESS;
-  ares_tls_t        *state      = NULL;
-  BIO               *bio        = NULL;
-  SSL_SESSION       *sess       = NULL;
+  ares_status_t status = ARES_SUCCESS;
+  ares_tls_t   *state  = NULL;
+  BIO          *bio    = NULL;
+  SSL_SESSION  *sess   = NULL;
 
   if (tls == NULL || conn == NULL) {
     return ARES_EFORMERR;
@@ -525,10 +525,10 @@ ares_status_t ares_tlsimp_create(ares_tls_t **tls,
   SSL_set_bio(state->ssl, bio, bio);
 
   /* Set hostname for peer verification */
-  //SSL_set1_host(state->ssl, conn->hostname);
+  // SSL_set1_host(state->ssl, conn->hostname);
 
   /* Set the hostname for SNI */
-  //SSL_set_tlsext_host_name(state->ssl, conn->hostname);
+  // SSL_set_tlsext_host_name(state->ssl, conn->hostname);
 
   /* Session handling */
   sess = ares_crypto_tls_get_session(crypto_ctx, conn);
@@ -568,16 +568,13 @@ void ares_tlsimp_destroy(ares_tls_t *tls)
   ares_free(tls);
 }
 
-
 ares_conn_err_t ares_tlsimp_connect(ares_tls_t *tls)
 {
-  int            rv;
-  int            err;
+  int rv;
+  int err;
 
-  if (tls == NULL || (
-        tls->state != ARES_OSSL_STATE_INIT &&
-        tls->state != ARES_OSSL_STATE_CONNECT)
-     ) {
+  if (tls == NULL || (tls->state != ARES_OSSL_STATE_INIT &&
+                      tls->state != ARES_OSSL_STATE_CONNECT)) {
     return ARES_CONN_ERR_INVALID;
   }
 
@@ -614,10 +611,8 @@ ares_conn_err_t ares_tlsimp_shutdown(ares_tls_t *tls)
   int rv;
   int err;
 
-  if (tls == NULL || (
-        tls->state != ARES_OSSL_STATE_ESTABLISHED &&
-        tls->state != ARES_OSSL_STATE_SHUTDOWN)
-     ) {
+  if (tls == NULL || (tls->state != ARES_OSSL_STATE_ESTABLISHED &&
+                      tls->state != ARES_OSSL_STATE_SHUTDOWN)) {
     return ARES_CONN_ERR_INVALID;
   }
 
@@ -644,13 +639,11 @@ ares_conn_err_t ares_tlsimp_shutdown(ares_tls_t *tls)
 ares_conn_err_t ares_tlsimp_write(ares_tls_t *tls, const unsigned char *buf,
                                   size_t *buf_len)
 {
-  int            rv;
-  int            err;
+  int rv;
+  int err;
 
-  if (tls == NULL ||
-        (tls->state != ARES_OSSL_STATE_INIT &&
-         tls->state != ARES_OSSL_STATE_ESTABLISHED)
-     ) {
+  if (tls == NULL || (tls->state != ARES_OSSL_STATE_INIT &&
+                      tls->state != ARES_OSSL_STATE_ESTABLISHED)) {
     return ARES_CONN_ERR_INVALID;
   }
 
@@ -695,8 +688,8 @@ ares_conn_err_t ares_tlsimp_write(ares_tls_t *tls, const unsigned char *buf,
 ares_conn_err_t ares_tlsimp_read(ares_tls_t *tls, unsigned char *buf,
                                  size_t *buf_len)
 {
-  int            rv;
-  int            err;
+  int rv;
+  int err;
 
   if (tls == NULL || tls->state != ARES_OSSL_STATE_ESTABLISHED) {
     return ARES_CONN_ERR_INVALID;
@@ -725,7 +718,6 @@ ares_conn_err_t ares_tlsimp_read(ares_tls_t *tls, unsigned char *buf,
   }
   return tls->last_io_error;
 }
-
 
 
 #endif

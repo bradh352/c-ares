@@ -37,12 +37,12 @@ typedef struct ares_tls ares_tls_t;
 
 /* TLS Provider-specific primitive implementations */
 
-ares_status_t ares_tlsimp_create(ares_tls_t **tls,
-                                 ares_crypto_ctx_t *crypto_ctx,
-                                 ares_conn_t *conn);
-void ares_tlsimp_destroy(ares_tls_t *tls);
-ares_conn_err_t ares_tlsimp_read(ares_tls_t *tls, unsigned char *buf,
-                                 size_t *buf_len);
+ares_status_t           ares_tlsimp_create(ares_tls_t       **tls,
+                                           ares_crypto_ctx_t *crypto_ctx,
+                                           ares_conn_t       *conn);
+void                    ares_tlsimp_destroy(ares_tls_t *tls);
+ares_conn_err_t         ares_tlsimp_read(ares_tls_t *tls, unsigned char *buf,
+                                         size_t *buf_len);
 ares_conn_err_t ares_tlsimp_write(ares_tls_t *tls, const unsigned char *buf,
                                   size_t *buf_len);
 ares_conn_err_t ares_tlsimp_shutdown(ares_tls_t *tls);

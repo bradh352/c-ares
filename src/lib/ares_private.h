@@ -353,18 +353,18 @@ void ares__dnsrec_convert_cb(void *arg, ares_status_t status, size_t timeouts,
 void ares__free_query(ares_query_t *query);
 
 unsigned short ares__generate_new_id(ares_rand_state *state);
-ares_status_t ares__expand_name_validated(const unsigned char *encoded,
-                                          const unsigned char *abuf,
-                                          size_t alen, char **s, size_t *enclen,
-                                          ares_bool_t is_hostname);
-ares_status_t ares_expand_string_ex(const unsigned char *encoded,
-                                    const unsigned char *abuf, size_t alen,
-                                    unsigned char **s, size_t *enclen);
-ares_status_t ares__init_servers_state(ares_channel_t *channel);
-ares_status_t ares__init_by_options(ares_channel_t            *channel,
-                                    const struct ares_options *options,
-                                    int                        optmask);
-ares_status_t ares__init_by_sysconfig(ares_channel_t *channel);
+ares_status_t  ares__expand_name_validated(const unsigned char *encoded,
+                                           const unsigned char *abuf,
+                                           size_t alen, char **s, size_t *enclen,
+                                           ares_bool_t is_hostname);
+ares_status_t  ares_expand_string_ex(const unsigned char *encoded,
+                                     const unsigned char *abuf, size_t alen,
+                                     unsigned char **s, size_t *enclen);
+ares_status_t  ares__init_servers_state(ares_channel_t *channel);
+ares_status_t  ares__init_by_options(ares_channel_t            *channel,
+                                     const struct ares_options *options,
+                                     int                        optmask);
+ares_status_t  ares__init_by_sysconfig(ares_channel_t *channel);
 
 typedef struct {
   ares__llist_t   *sconfig;
@@ -446,22 +446,22 @@ ares_status_t ares__addrinfo_localhost(const char *name, unsigned short port,
                                        const struct ares_addrinfo_hints *hints,
                                        struct ares_addrinfo             *ai);
 
-ares_status_t   ares__servers_update(ares_channel_t *channel,
-                                     ares__llist_t  *server_list,
-                                     ares_bool_t     user_specified);
-ares_status_t   ares__sconfig_append(ares__llist_t         **sconfig,
-                                     const struct ares_addr *addr,
-                                     unsigned short          udp_port,
-                                     unsigned short          tcp_port,
-                                     const char             *ll_iface);
-ares_status_t   ares__sconfig_append_fromstr(ares__llist_t **sconfig,
-                                             const char     *str,
-                                             ares_bool_t     ignore_invalid);
-ares_status_t   ares_in_addr_to_sconfig_llist(const struct in_addr *servers,
-                                              size_t                nservers,
-                                              ares__llist_t       **llist);
-ares_status_t   ares_get_server_addr(const ares_server_t *server,
-                                     ares__buf_t         *buf);
+ares_status_t ares__servers_update(ares_channel_t *channel,
+                                   ares__llist_t  *server_list,
+                                   ares_bool_t     user_specified);
+ares_status_t ares__sconfig_append(ares__llist_t         **sconfig,
+                                   const struct ares_addr *addr,
+                                   unsigned short          udp_port,
+                                   unsigned short          tcp_port,
+                                   const char             *ll_iface);
+ares_status_t ares__sconfig_append_fromstr(ares__llist_t **sconfig,
+                                           const char     *str,
+                                           ares_bool_t     ignore_invalid);
+ares_status_t ares_in_addr_to_sconfig_llist(const struct in_addr *servers,
+                                            size_t                nservers,
+                                            ares__llist_t       **llist);
+ares_status_t ares_get_server_addr(const ares_server_t *server,
+                                   ares__buf_t         *buf);
 
 struct ares_hosts_entry;
 typedef struct ares_hosts_entry ares_hosts_entry_t;

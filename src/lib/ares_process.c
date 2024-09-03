@@ -691,7 +691,6 @@ static ares_status_t process_answer(ares_channel_t      *channel,
   if (ares_dns_record_get_rcode(rdnsrec) == ARES_RCODE_FORMERR &&
       ares_dns_get_opt_rr_const(query->query) != NULL &&
       ares_dns_get_opt_rr_const(rdnsrec) == NULL) {
-
     status = rewrite_without_edns(query);
     if (status != ARES_SUCCESS) {
       end_query(channel, server, query, status, NULL);
