@@ -175,7 +175,6 @@ int LLVMFuzzerTestOneInput(const unsigned char *data, unsigned long size)
     printmsg, ares_dns_record_rr_cnt(dnsrec, ARES_SECTION_ADDITIONAL), 0);
   ares_buf_append_str(printmsg, "\n\n");
   ares_buf_append_str(printmsg, ";; QUESTION SECTION:\n");
-
   for (i = 0; i < ares_dns_record_query_cnt(dnsrec); i++) {
     const char         *name;
     ares_dns_rec_type_t qtype;
@@ -202,7 +201,6 @@ int LLVMFuzzerTestOneInput(const unsigned char *data, unsigned long size)
     ares_buf_append_str(printmsg,
                         ares_dns_section_tostr((ares_dns_section_t)i));
     ares_buf_append_str(printmsg, " SECTION:\n");
-
     for (j = 0; j < ares_dns_record_rr_cnt(dnsrec, (ares_dns_section_t)i);
          j++) {
       size_t                   keys_cnt = 0;

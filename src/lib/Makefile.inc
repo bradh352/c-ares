@@ -99,14 +99,9 @@ HHEADERS = ares_android.h			\
   ares_platform.h			\
   ares_private.h			\
   ares_setup.h				\
-<<<<<<< HEAD
   crypto/ares_crypto.h			\
-  dsa/ares__htable.h			\
-  dsa/ares__slist.h			\
-=======
   dsa/ares_htable.h			\
   dsa/ares_slist.h			\
->>>>>>> main
   event/ares_event.h			\
   event/ares_event_win32.h		\
   include/ares_array.h			\
