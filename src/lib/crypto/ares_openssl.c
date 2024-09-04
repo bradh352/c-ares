@@ -289,7 +289,7 @@ static int ares_ossl_bio_read_ex(BIO *b, char *buf, size_t len,
 
   *readbytes = 0;
 
-  tls->last_io_error = ares__conn_read(tls->conn, buf, len, readbytes);
+  tls->last_io_error = ares_conn_read(tls->conn, buf, len, readbytes);
   if (tls->last_io_error == ARES_CONN_ERR_SUCCESS) {
     return 1;
   }
@@ -309,7 +309,7 @@ static int ares_ossl_bio_write_ex(BIO *b, const char *buf, size_t len,
 
   *written = 0;
 
-  tls->last_io_error = ares__conn_write(tls->conn, buf, len, written);
+  tls->last_io_error = ares_conn_write(tls->conn, buf, len, written);
   if (tls->last_io_error == ARES_CONN_ERR_SUCCESS) {
     return 1;
   }
