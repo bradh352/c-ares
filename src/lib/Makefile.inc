@@ -42,12 +42,14 @@ CSOURCES = ares_addrinfo2hostent.c	\
   inet_net_pton.c			\
   inet_ntop.c				\
   windows_port.c			\
+  crypto/ares_crypto.c			\
   crypto/ares_openssl.c			\
   dsa/ares_array.c			\
   dsa/ares_htable.c			\
   dsa/ares_htable_asvp.c		\
   dsa/ares_htable_strvp.c		\
   dsa/ares_htable_szvp.c		\
+  dsa/ares_htable_vpstr.c		\
   dsa/ares_htable_vpvp.c		\
   dsa/ares_llist.c			\
   dsa/ares_slist.c			\
@@ -109,6 +111,7 @@ HHEADERS = ares_android.h			\
   include/ares_htable_asvp.h		\
   include/ares_htable_strvp.h		\
   include/ares_htable_szvp.h		\
+  include/ares_htable_vpstr.h		\
   include/ares_htable_vpvp.h		\
   include/ares_llist.h			\
   include/ares_str.h			\

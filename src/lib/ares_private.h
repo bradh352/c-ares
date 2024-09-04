@@ -52,6 +52,7 @@
 #include "ares_htable_szvp.h"
 #include "ares_htable_asvp.h"
 #include "ares_htable_vpvp.h"
+#include "ares_htable_vpstr.h"
 #include "record/ares_dns_multistring.h"
 #include "ares_buf.h"
 #include "record/ares_dns_private.h"
