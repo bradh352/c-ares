@@ -177,12 +177,11 @@ struct iovec {
 
 ares_bool_t ares_socket_tfo_supported(const ares_channel_t *channel)
 {
-  if (!TFO_SUPPORTED) {
+  if (!TFO_SUPPORTED ||
+      (channel->sock_funcs != NULL && channel->sock_funcs->asendv != NULL)) {
     return ARES_FALSE;
   }
-  if (channel->sock_funcs != NULL && channel->sock_funcs->asendv != NULL) {
-    return ARES_FALSE;
-  }
+
   return ARES_TRUE;
 }
 
@@ -306,7 +305,7 @@ ares_conn_err_t ares_socket_write_tfo(ares_channel_t *channel, ares_socket_t fd,
 #if defined(TFO_USE_SENDTO) && TFO_USE_SENDTO
   {
     ares_ssize_t rv;
-    int          flags;
+    int          flags = 0;
 
 #  ifdef HAVE_MSG_NOSIGNAL
     flags |= MSG_NOSIGNAL;
@@ -667,7 +666,7 @@ ares_conn_err_t ares_socket_connect(ares_channel_t *channel,
 
 #if defined(TFO_SKIP_CONNECT) && TFO_SKIP_CONNECT
   if (is_tfo) {
-    return ARES_SUCCESS;
+    return ARES_CONN_ERR_SUCCESS;
   }
 #endif
 
