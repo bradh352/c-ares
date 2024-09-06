@@ -50,7 +50,7 @@ static ares_status_t process_write(ares_channel_t *channel,
                           ares_socket_t         write_fd);
 static ares_status_t process_read(ares_channel_t *channel, ares_socket_t read_fd,
                          const ares_timeval_t *now);
-static void process_timeouts(ares_channel_t       *channel,
+static ares_status_t process_timeouts(ares_channel_t       *channel,
                              const ares_timeval_t *now);
 static ares_status_t process_answer(ares_channel_t      *channel,
                                     const unsigned char *abuf, size_t alen,
@@ -239,7 +239,10 @@ static ares_status_t ares_process_fds_nolock(ares_channel_t         *channel,
 
   if (!(flags & ARES_PROCESS_FLAG_SKIP_NON_FD)) {
     ares_check_cleanup_conns(channel);
-    process_timeouts(channel, &now);
+    status = process_timeouts(channel, &now);
+    if (status == ARES_ENOMEM) {
+      goto done;
+    }
   }
 
 done:
@@ -597,9 +600,10 @@ static ares_status_t process_read(ares_channel_t *channel,
 }
 
 /* If any queries have timed out, note the timeout and move them on. */
-static void process_timeouts(ares_channel_t *channel, const ares_timeval_t *now)
+static ares_status_t process_timeouts(ares_channel_t *channel, const ares_timeval_t *now)
 {
   ares_slist_node_t *node;
+  ares_status_t      status = ARES_SUCCESS;
 
   /* Just keep popping off the first as this list will re-sort as things come
    * and go.  We don't want to try to rely on 'next' as some operation might
@@ -618,8 +622,13 @@ static void process_timeouts(ares_channel_t *channel, const ares_timeval_t *now)
 
     conn = query->conn;
     server_increment_failures(conn->server, query->using_tcp);
-    ares_requeue_query(query, now, ARES_ETIMEOUT, ARES_TRUE, NULL);
+    status = ares_requeue_query(query, now, ARES_ETIMEOUT, ARES_TRUE, NULL);
+    if (status == ARES_ENOMEM) {
+      goto done;
+    }
   }
+done:
+  return status;
 }
 
 static ares_status_t rewrite_without_edns(ares_query_t *query)
