@@ -58,6 +58,7 @@
 #include "record/ares_dns_private.h"
 #include "util/ares_iface_ips.h"
 #include "util/ares_threads.h"
+#include "ares_socket.h"
 #include "ares_conn.h"
 #include "crypto/ares_crypto.h"
 #include "ares_str.h"

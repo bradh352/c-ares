@@ -3,13 +3,10 @@
 
 CSOURCES = ares_addrinfo2hostent.c	\
   ares_addrinfo_localhost.c		\
-  ares_close_sockets.c			\
-  ares_hosts_file.c			\
-  ares_parse_into_addrinfo.c		\
-  ares_socket.c			\
-  ares_sortaddrinfo.c			\
   ares_android.c			\
   ares_cancel.c				\
+  ares_close_sockets.c			\
+  ares_conn.c				\
   ares_cookie.c				\
   ares_data.c				\
   ares_destroy.c			\
@@ -21,16 +18,20 @@ CSOURCES = ares_addrinfo2hostent.c	\
   ares_gethostbyaddr.c			\
   ares_gethostbyname.c			\
   ares_getnameinfo.c			\
+  ares_hosts_file.c			\
   ares_init.c				\
   ares_library_init.c			\
   ares_metrics.c			\
   ares_options.c			\
   ares_platform.c			\
+  ares_parse_into_addrinfo.c		\
   ares_process.c			\
   ares_qcache.c				\
   ares_query.c				\
   ares_search.c				\
   ares_send.c				\
+  ares_socket.c				\
+  ares_sortaddrinfo.c			\
   ares_strerror.c			\
   ares_sysconfig.c			\
   ares_sysconfig_files.c		\
@@ -87,7 +88,7 @@ CSOURCES = ares_addrinfo2hostent.c	\
   str/ares_buf.c			\
   str/ares_str.c			\
   str/ares_strsplit.c			\
-  util/ares_iface_ips.c		\
+  util/ares_iface_ips.c			\
   util/ares_threads.c			\
   util/ares_timeval.c			\
   util/ares_math.c			\
@@ -102,6 +103,7 @@ HHEADERS = ares_android.h			\
   ares_platform.h			\
   ares_private.h			\
   ares_setup.h				\
+  ares_socket.h				\
   crypto/ares_crypto.h			\
   dsa/ares_htable.h			\
   dsa/ares_slist.h			\
