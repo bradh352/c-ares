@@ -1139,13 +1139,13 @@ ares_conn_t *ares_conn_from_fd(ares_channel_t *channel, ares_socket_t fd)
   return ares_llist_node_val(node);
 }
 
-ares_status_t ares_conn_interpret_events(ares_fd_events_t **out,
-                                         ares_channel_t *channel,
+ares_status_t ares_conn_interpret_events(ares_fd_events_t      **out,
+                                         ares_channel_t         *channel,
                                          const ares_fd_events_t *events,
-                                         size_t *nevents)
+                                         size_t                 *nevents)
 {
-  size_t            i;
-  size_t            orig_events = *nevents;
+  size_t i;
+  size_t orig_events = *nevents;
 
   if (orig_events == 0 || events == NULL || nevents == NULL || out == NULL) {
     return ARES_EFORMERR;
@@ -1159,7 +1159,7 @@ ares_status_t ares_conn_interpret_events(ares_fd_events_t **out,
     return ARES_ENOMEM;
   }
 
-  for (i=0; i<orig_events; i++) {
+  for (i = 0; i < orig_events; i++) {
     ares_tls_stateflag_t sf;
     ares_conn_t         *conn = ares_conn_from_fd(channel, events[i].fd);
 

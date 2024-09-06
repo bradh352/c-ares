@@ -179,8 +179,7 @@ ares_bool_t ares_htable_strvp_remove(ares_htable_strvp_t *htable,
   return ares_htable_remove(htable->hash, key);
 }
 
-void *ares_htable_strvp_claim(ares_htable_strvp_t *htable,
-                              const char *key)
+void *ares_htable_strvp_claim(ares_htable_strvp_t *htable, const char *key)
 {
   ares_htable_strvp_bucket_t *bucket = NULL;
   void                       *val;

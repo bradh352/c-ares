@@ -42,7 +42,8 @@
 
 struct ares_htable_vpstr;
 
-/*! Opaque data type for void pointer key, string value hash table implementation */
+/*! Opaque data type for void pointer key, string value hash table
+ * implementation */
 typedef struct ares_htable_vpstr ares_htable_vpstr_t;
 
 /*! Destroy hashtable
@@ -73,10 +74,8 @@ CARES_EXTERN ares_bool_t ares_htable_vpstr_insert(ares_htable_vpstr_t *htable,
  *  \param[out] val     Optional.  Pointer to store value.
  *  \return ARES_TRUE on success, ARES_FALSE on failure
  */
-CARES_EXTERN ares_bool_t
-  ares_htable_vpstr_get(const ares_htable_vpstr_t *htable,
-                        const void *key,
-                        const char **val);
+CARES_EXTERN ares_bool_t ares_htable_vpstr_get(
+  const ares_htable_vpstr_t *htable, const void *key, const char **val);
 
 /*! Retrieve value from hashtable directly as return value.  Caveat to this
  *  function over ares_htable_vpstr_get() is that if a NULL value is stored
@@ -97,7 +96,7 @@ CARES_EXTERN const char *
  *  \return ARES_TRUE if found, ARES_FALSE if not
  */
 CARES_EXTERN ares_bool_t ares_htable_vpstr_remove(ares_htable_vpstr_t *htable,
-                                                 const void           *key);
+                                                  const void          *key);
 
 /*! Retrieve the number of keys stored in the hash table
  *

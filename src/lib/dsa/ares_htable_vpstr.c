@@ -136,7 +136,7 @@ fail:
 }
 
 ares_bool_t ares_htable_vpstr_get(const ares_htable_vpstr_t *htable,
-                                 const void *key, const char **val)
+                                  const void *key, const char **val)
 {
   ares_htable_vpstr_bucket_t *bucket = NULL;
 
@@ -160,14 +160,15 @@ ares_bool_t ares_htable_vpstr_get(const ares_htable_vpstr_t *htable,
 }
 
 const char *ares_htable_vpstr_get_direct(const ares_htable_vpstr_t *htable,
-                                         const void               *key)
+                                         const void                *key)
 {
   const char *val = NULL;
   ares_htable_vpstr_get(htable, key, &val);
   return val;
 }
 
-ares_bool_t ares_htable_vpstr_remove(ares_htable_vpstr_t *htable, const void *key)
+ares_bool_t ares_htable_vpstr_remove(ares_htable_vpstr_t *htable,
+                                     const void          *key)
 {
   if (htable == NULL) {
     return ARES_FALSE;

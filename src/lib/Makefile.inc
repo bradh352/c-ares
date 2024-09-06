@@ -43,6 +43,7 @@ CSOURCES = ares_addrinfo2hostent.c	\
   inet_ntop.c				\
   windows_port.c			\
   crypto/ares_crypto.c			\
+  crypto/ares_crypto_stubs.c		\
   crypto/ares_openssl.c			\
   dsa/ares_array.c			\
   dsa/ares_htable.c			\

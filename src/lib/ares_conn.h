@@ -194,6 +194,7 @@ typedef enum {
   ARES_CONN_ERR_NOMEM        = 14, /*!< Out of memory */
   ARES_CONN_ERR_INVALID      = 15, /*!< Invalid Usage */
   ARES_CONN_ERR_TOOLARGE     = 16, /*!< Request size too large */
+  ARES_CONN_ERR_NOTIMP       = 17, /*!< Not implemented */
   ARES_CONN_ERR_FAILURE      = 99  /*!< Generic failure */
 } ares_conn_err_t;
 
@@ -205,11 +206,11 @@ ares_conn_err_t ares_conn_write(ares_conn_t *conn, const void *data, size_t len,
 ares_status_t   ares_conn_flush(ares_conn_t *conn);
 ares_conn_err_t ares_conn_read(ares_conn_t *conn, void *data, size_t len,
                                size_t *read_bytes);
-ares_status_t ares_conn_interpret_events(ares_fd_events_t **out,
-                                         ares_channel_t *channel,
-                                         const ares_fd_events_t *events,
-                                         size_t *nevents);
-ares_conn_t *ares_conn_from_fd(ares_channel_t *channel, ares_socket_t fd);
+ares_status_t   ares_conn_interpret_events(ares_fd_events_t      **out,
+                                           ares_channel_t         *channel,
+                                           const ares_fd_events_t *events,
+                                           size_t                 *nevents);
+ares_conn_t    *ares_conn_from_fd(ares_channel_t *channel, ares_socket_t fd);
 void            ares_conn_sock_state_cb_update(ares_conn_t            *conn,
                                                ares_conn_state_flags_t flags);
 ares_conn_err_t ares_socket_recv(ares_channel_t *channel, ares_socket_t s,

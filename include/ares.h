@@ -704,12 +704,11 @@ typedef enum {
  */
 CARES_EXTERN ares_status_t ares_process_fds(ares_channel_t         *channel,
                                             const ares_fd_events_t *events,
-                                            size_t                  nevents,
-                                            unsigned int            flags);
+                                            size_t nevents, unsigned int flags);
 
-CARES_EXTERN void ares_process_fd(ares_channel_t *channel,
-                                  ares_socket_t   read_fd,
-                                  ares_socket_t   write_fd);
+CARES_EXTERN void          ares_process_fd(ares_channel_t *channel,
+                                           ares_socket_t   read_fd,
+                                           ares_socket_t   write_fd);
 
 CARES_EXTERN CARES_DEPRECATED_FOR(ares_dns_record_create) int ares_create_query(
   const char *name, int dnsclass, int type, unsigned short id, int rd,

@@ -48,13 +48,13 @@ struct ares_cryptoimp_ctx {
 };
 
 struct ares_tls {
-  ares_conn_t            *conn;
-  ares_cryptoimp_ctx_t   *ctx;
-  SSL                    *ssl;
-  ares_conn_err_t         last_io_error;
-  ares_tls_state_t        state;
-  ares_tls_stateflag_t    flags;
-  size_t                  earlydata_sent_len;
+  ares_conn_t          *conn;
+  ares_cryptoimp_ctx_t *ctx;
+  SSL                  *ssl;
+  ares_conn_err_t       last_io_error;
+  ares_tls_state_t      state;
+  ares_tls_stateflag_t  flags;
+  size_t                earlydata_sent_len;
 };
 
 #  if defined(__APPLE__)
@@ -372,7 +372,7 @@ static BIO_METHOD *ares_ossl_create_bio_method(void)
 
 static int ares_ossl_sslsess_new_cb(SSL *ssl, SSL_SESSION *sess)
 {
-  ares_tls_t           *tls = SSL_get_app_data(ssl);
+  ares_tls_t *tls = SSL_get_app_data(ssl);
 
   if (tls == NULL || tls->conn == NULL) {
     return 0;
@@ -398,7 +398,7 @@ static void ares_ossl_sslsess_remove_cb(SSL_CTX *ctx, SSL_SESSION *sess)
 }
 
 ares_status_t ares_cryptoimp_ctx_init(ares_cryptoimp_ctx_t **ctx,
-                                      ares_crypto_ctx_t *parent)
+                                      ares_crypto_ctx_t     *parent)
 {
   ares_status_t status;
 
@@ -620,9 +620,9 @@ ares_conn_err_t ares_tlsimp_shutdown(ares_tls_t *tls)
   return tls->last_io_error;
 }
 
-ares_conn_err_t ares_tlsimp_earlydata_write(ares_tls_t *tls,
+ares_conn_err_t ares_tlsimp_earlydata_write(ares_tls_t          *tls,
                                             const unsigned char *buf,
-                                            size_t *buf_len)
+                                            size_t              *buf_len)
 {
   int rv;
   int err;
@@ -655,7 +655,6 @@ ares_conn_err_t ares_tlsimp_earlydata_write(ares_tls_t *tls,
     tls->last_io_error = ARES_CONN_ERR_CONNRESET;
   }
   return tls->last_io_error;
-
 }
 
 ares_conn_err_t ares_tlsimp_write(ares_tls_t *tls, const unsigned char *buf,

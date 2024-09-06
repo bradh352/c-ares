@@ -45,13 +45,14 @@
 #include <limits.h>
 
 
-static void timeadd(ares_timeval_t *now, size_t millisecs);
+static void          timeadd(ares_timeval_t *now, size_t millisecs);
 static ares_status_t process_write(ares_channel_t *channel,
-                          ares_socket_t         write_fd);
-static ares_status_t process_read(ares_channel_t *channel, ares_socket_t read_fd,
-                         const ares_timeval_t *now);
+                                   ares_socket_t   write_fd);
+static ares_status_t process_read(ares_channel_t       *channel,
+                                  ares_socket_t         read_fd,
+                                  const ares_timeval_t *now);
 static ares_status_t process_timeouts(ares_channel_t       *channel,
-                             const ares_timeval_t *now);
+                                      const ares_timeval_t *now);
 static ares_status_t process_answer(ares_channel_t      *channel,
                                     const unsigned char *abuf, size_t alen,
                                     ares_conn_t          *conn,
@@ -189,8 +190,7 @@ static void timeadd(ares_timeval_t *now, size_t millisecs)
 
 static ares_status_t ares_process_fds_nolock(ares_channel_t         *channel,
                                              const ares_fd_events_t *events,
-                                             size_t                  nevents,
-                                             unsigned int            flags)
+                                             size_t nevents, unsigned int flags)
 {
   ares_timeval_t    now;
   size_t            i;
@@ -253,9 +253,9 @@ done:
   return ARES_SUCCESS;
 }
 
-ares_status_t ares_process_fds(ares_channel_t *channel,
-                               const ares_fd_events_t *events,
-                               size_t nevents, unsigned int flags)
+ares_status_t ares_process_fds(ares_channel_t         *channel,
+                               const ares_fd_events_t *events, size_t nevents,
+                               unsigned int flags)
 {
   ares_status_t status;
 
@@ -388,10 +388,11 @@ done:
   ares_channel_unlock(channel);
 }
 
-static ares_status_t process_write(ares_channel_t *channel, ares_socket_t write_fd)
+static ares_status_t process_write(ares_channel_t *channel,
+                                   ares_socket_t   write_fd)
 {
-  ares_conn_t       *conn = ares_conn_from_fd(channel, write_fd);
-  ares_status_t      status;
+  ares_conn_t  *conn = ares_conn_from_fd(channel, write_fd);
+  ares_status_t status;
 
   if (conn == NULL) {
     return ARES_SUCCESS;
@@ -574,11 +575,11 @@ static ares_status_t read_answers(ares_conn_t *conn, const ares_timeval_t *now)
   return status;
 }
 
-static ares_status_t process_read(ares_channel_t *channel,
-                                  ares_socket_t read_fd,
+static ares_status_t process_read(ares_channel_t       *channel,
+                                  ares_socket_t         read_fd,
                                   const ares_timeval_t *now)
 {
-  ares_conn_t  *conn   = ares_conn_from_fd(channel, read_fd);
+  ares_conn_t  *conn = ares_conn_from_fd(channel, read_fd);
   ares_status_t status;
 
   if (conn == NULL) {
@@ -600,7 +601,8 @@ static ares_status_t process_read(ares_channel_t *channel,
 }
 
 /* If any queries have timed out, note the timeout and move them on. */
-static ares_status_t process_timeouts(ares_channel_t *channel, const ares_timeval_t *now)
+static ares_status_t process_timeouts(ares_channel_t       *channel,
+                                      const ares_timeval_t *now)
 {
   ares_slist_node_t *node;
   ares_status_t      status = ARES_SUCCESS;
@@ -628,7 +630,10 @@ static ares_status_t process_timeouts(ares_channel_t *channel, const ares_timeva
     }
   }
 done:
-  return status;
+  if (status == ARES_ENOMEM) {
+    return ARES_ENOMEM;
+  }
+  return ARES_SUCCESS;
 }
 
 static ares_status_t rewrite_without_edns(ares_query_t *query)

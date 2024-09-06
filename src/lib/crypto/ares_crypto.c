@@ -27,8 +27,6 @@
 #include "ares_private.h"
 #include "ares_crypto.h"
 
-#ifdef CARES_USE_CRYPTO
-
 struct ares_crypto_ctx {
   /*! Implementation-specific ctx for system initialization */
   ares_cryptoimp_ctx_t *imp_ctx;
@@ -38,7 +36,6 @@ struct ares_crypto_ctx {
 
   /*! Reverse lookups for sessions (for removal) */
   ares_htable_vpstr_t  *sess_rev;
-
 };
 
 ares_status_t ares_crypto_ctx_init(ares_crypto_ctx_t **ctx)
@@ -87,7 +84,7 @@ void ares_crypto_ctx_destroy(ares_crypto_ctx_t *ctx)
 
 static char *ares_tls_session_key(ares_conn_t *conn)
 {
-  ares_status_t status                 = ARES_SUCCESS;
+  ares_status_t status = ARES_SUCCESS;
   ares_buf_t   *buf;
   char          addr[INET6_ADDRSTRLEN] = "";
 
@@ -165,8 +162,7 @@ done:
   return status;
 }
 
-ares_status_t ares_tls_session_remove(ares_crypto_ctx_t *crypto_ctx,
-                                      void *sess)
+ares_status_t ares_tls_session_remove(ares_crypto_ctx_t *crypto_ctx, void *sess)
 {
   const char *key;
 
@@ -185,8 +181,7 @@ ares_status_t ares_tls_session_remove(ares_crypto_ctx_t *crypto_ctx,
   return ARES_SUCCESS;
 }
 
-void *ares_tls_session_get(ares_crypto_ctx_t *crypto_ctx,
-                           ares_conn_t       *conn)
+void *ares_tls_session_get(ares_crypto_ctx_t *crypto_ctx, ares_conn_t *conn)
 {
   char *key;
   void *sess;
@@ -205,5 +200,3 @@ void *ares_tls_session_get(ares_crypto_ctx_t *crypto_ctx,
 
   return sess;
 }
-
-#endif
