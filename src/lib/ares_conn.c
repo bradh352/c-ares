@@ -519,7 +519,7 @@ ares_status_t ares_conn_interpret_events(ares_fd_events_t      **out,
   *out     = NULL;
   *nevents = 0;
 
-  *out = ares_malloc_zero(sizeof(*out) * orig_events);
+  *out = ares_malloc_zero(sizeof(**out) * orig_events);
   if (*out == NULL) {
     return ARES_ENOMEM;
   }
