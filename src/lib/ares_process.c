@@ -46,9 +46,9 @@
 
 
 static void timeadd(ares_timeval_t *now, size_t millisecs);
-static void process_write(const ares_channel_t *channel,
+static ares_status_t process_write(ares_channel_t *channel,
                           ares_socket_t         write_fd);
-static void process_read(const ares_channel_t *channel, ares_socket_t read_fd,
+static ares_status_t process_read(ares_channel_t *channel, ares_socket_t read_fd,
                          const ares_timeval_t *now);
 static void process_timeouts(ares_channel_t       *channel,
                              const ares_timeval_t *now);
@@ -187,27 +187,29 @@ static void timeadd(ares_timeval_t *now, size_t millisecs)
   }
 }
 
-static void ares_process_fds_nolock(ares_channel_t         *channel,
-                                    const ares_fd_events_t *events,
-                                    size_t nevents, unsigned int flags)
+static ares_status_t ares_process_fds_nolock(ares_channel_t         *channel,
+                                             const ares_fd_events_t *events,
+                                             size_t                  nevents,
+                                             unsigned int            flags)
 {
-  ares_timeval_t now;
-  size_t         i;
+  ares_timeval_t    now;
+  size_t            i;
+  ares_status_t     status = ARES_SUCCESS;
+  ares_fd_events_t *evs    = NULL;
 
   if (channel == NULL || (events == NULL && nevents != 0)) {
-    return; /* LCOV_EXCL_LINE: DefensiveCoding */
+    return ARES_EFORMERR; /* LCOV_EXCL_LINE: DefensiveCoding */
+  }
+
+  if (nevents != 0) {
+    status = ares_conn_interpret_events(&evs, channel, events, &nevents);
+    if (status != ARES_SUCCESS) {
+      return status;
+    }
+    events = evs;
   }
 
   ares_tvnow(&now);
-
-  /* Process read events */
-  for (i = 0; i < nevents; i++) {
-    if (events[i].fd == ARES_SOCKET_BAD ||
-        !(events[i].events & ARES_FD_EVENT_READ)) {
-      continue;
-    }
-    process_read(channel, events[i].fd, &now);
-  }
 
   /* Process write events */
   for (i = 0; i < nevents; i++) {
@@ -215,25 +217,53 @@ static void ares_process_fds_nolock(ares_channel_t         *channel,
         !(events[i].events & ARES_FD_EVENT_WRITE)) {
       continue;
     }
-    process_write(channel, events[i].fd);
+    status = process_write(channel, events[i].fd);
+    /* We only care about ENOMEM, anything else is handled via connection
+     * retries, etc */
+    if (status == ARES_ENOMEM) {
+      goto done;
+    }
+  }
+
+  /* Process read events */
+  for (i = 0; i < nevents; i++) {
+    if (events[i].fd == ARES_SOCKET_BAD ||
+        !(events[i].events & ARES_FD_EVENT_READ)) {
+      continue;
+    }
+    status = process_read(channel, events[i].fd, &now);
+    if (status == ARES_ENOMEM) {
+      goto done;
+    }
   }
 
   if (!(flags & ARES_PROCESS_FLAG_SKIP_NON_FD)) {
     ares_check_cleanup_conns(channel);
     process_timeouts(channel, &now);
   }
+
+done:
+  ares_free(evs);
+  if (status == ARES_ENOMEM) {
+    return ARES_ENOMEM;
+  }
+  return ARES_SUCCESS;
 }
 
-void ares_process_fds(ares_channel_t *channel, const ares_fd_events_t *events,
-                      size_t nevents, unsigned int flags)
+ares_status_t ares_process_fds(ares_channel_t *channel,
+                               const ares_fd_events_t *events,
+                               size_t nevents, unsigned int flags)
 {
+  ares_status_t status;
+
   if (channel == NULL) {
-    return;
+    return ARES_EFORMERR;
   }
 
   ares_channel_lock(channel);
-  ares_process_fds_nolock(channel, events, nevents, flags);
+  status = ares_process_fds_nolock(channel, events, nevents, flags);
   ares_channel_unlock(channel);
+  return status;
 }
 
 void ares_process_fd(ares_channel_t *channel, ares_socket_t read_fd,
@@ -355,18 +385,14 @@ done:
   ares_channel_unlock(channel);
 }
 
-static void process_write(const ares_channel_t *channel, ares_socket_t write_fd)
+static ares_status_t process_write(ares_channel_t *channel, ares_socket_t write_fd)
 {
-  ares_llist_node_t *node;
-  ares_conn_t       *conn;
+  ares_conn_t       *conn = ares_conn_from_fd(channel, write_fd);
   ares_status_t      status;
 
-  node = ares_htable_asvp_get_direct(channel->connnode_by_socket, write_fd);
-  if (node == NULL) {
-    return;
+  if (conn == NULL) {
+    return ARES_SUCCESS;
   }
-
-  conn = ares_llist_node_val(node);
 
   /* Mark as connected if we got here and TFO Initial not set */
   if (!(conn->flags & ARES_CONN_FLAG_TFO_INITIAL)) {
@@ -377,6 +403,7 @@ static void process_write(const ares_channel_t *channel, ares_socket_t write_fd)
   if (status != ARES_SUCCESS) {
     handle_conn_error(conn, ARES_TRUE, status);
   }
+  return status;
 }
 
 void ares_process_pending_write(ares_channel_t *channel)
@@ -492,8 +519,9 @@ static ares_status_t read_conn_packets(ares_conn_t *conn)
   return ARES_SUCCESS;
 }
 
-static void read_answers(ares_conn_t *conn, const ares_timeval_t *now)
+static ares_status_t read_answers(ares_conn_t *conn, const ares_timeval_t *now)
 {
+  ares_status_t   status;
   ares_channel_t *channel = conn->server->channel;
 
   /* Process all queued answers */
@@ -501,19 +529,20 @@ static void read_answers(ares_conn_t *conn, const ares_timeval_t *now)
     unsigned short       dns_len  = 0;
     const unsigned char *data     = NULL;
     size_t               data_len = 0;
-    ares_status_t        status;
 
     /* Tag so we can roll back */
     ares_buf_tag(conn->in_buf);
 
     /* Read length indicator */
-    if (ares_buf_fetch_be16(conn->in_buf, &dns_len) != ARES_SUCCESS) {
+    status = ares_buf_fetch_be16(conn->in_buf, &dns_len);
+    if (status != ARES_SUCCESS) {
       ares_buf_tag_rollback(conn->in_buf);
       break;
     }
 
     /* Not enough data for a full response yet */
-    if (ares_buf_consume(conn->in_buf, dns_len) != ARES_SUCCESS) {
+    status = ares_buf_consume(conn->in_buf, dns_len);
+    if (status != ARES_SUCCESS) {
       ares_buf_tag_rollback(conn->in_buf);
       break;
     }
@@ -533,37 +562,38 @@ static void read_answers(ares_conn_t *conn, const ares_timeval_t *now)
     status = process_answer(channel, data, data_len, conn, now);
     if (status != ARES_SUCCESS) {
       handle_conn_error(conn, ARES_TRUE, status);
-      return;
+      return status;
     }
 
     /* Since we processed the answer, clear the tag so space can be reclaimed */
     ares_buf_tag_clear(conn->in_buf);
   }
+  return status;
 }
 
-static void process_read(const ares_channel_t *channel, ares_socket_t read_fd,
-                         const ares_timeval_t *now)
+static ares_status_t process_read(ares_channel_t *channel,
+                                  ares_socket_t read_fd,
+                                  const ares_timeval_t *now)
 {
-  ares_llist_node_t *node;
-  ares_conn_t       *conn;
+  ares_conn_t  *conn   = ares_conn_from_fd(channel, read_fd);
+  ares_status_t status;
 
-  node = ares_htable_asvp_get_direct(channel->connnode_by_socket, read_fd);
-  if (node == NULL) {
-    return;
+  if (conn == NULL) {
+    return ARES_SUCCESS;
   }
-
-  conn = ares_llist_node_val(node);
 
   /* TODO: There might be a potential issue here where there was a read that
    *       read some data, then looped and read again and got a disconnect.
    *       Right now, that would cause a resend instead of processing the data
    *       we have.  This is fairly unlikely to occur due to only looping if
    *       a full buffer of 65535 bytes was read. */
-  if (read_conn_packets(conn) != ARES_SUCCESS) {
-    return;
+  status = read_conn_packets(conn);
+
+  if (status != ARES_SUCCESS) {
+    return status;
   }
 
-  read_answers(conn, now);
+  return read_answers(conn, now);
 }
 
 /* If any queries have timed out, note the timeout and move them on. */

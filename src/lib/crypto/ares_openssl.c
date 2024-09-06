@@ -54,6 +54,7 @@ struct ares_tls {
   ares_conn_err_t         last_io_error;
   ares_tls_state_t        state;
   ares_tls_stateflag_t    flags;
+  size_t                  earlydata_sent_len;
 };
 
 #  if defined(__APPLE__)
@@ -79,7 +80,7 @@ static ares_status_t ares_ossl_load_caroots(SSL_CTX *ctx, OSSL_LIB_CTX *libctx)
   store = SSL_CTX_get_cert_store(ctx);
   for (i = 0; i < CFArrayGetCount(anchors); i++) {
     const void          *ptr = CFArrayGetValueAtIndex(anchors, i);
-    SecCertificateRef    cr  = (SecCertificateRef)((void *)ptr);
+    SecCertificateRef    cr  = (SecCertificateRef)((void *)((size_t)ptr));
     CFDataRef            dref;
     X509                *x509;
     const unsigned char *data;
@@ -556,6 +557,7 @@ ares_conn_err_t ares_tlsimp_connect(ares_tls_t *tls)
   int err;
 
   if (tls == NULL || (tls->state != ARES_TLS_STATE_INIT &&
+                      tls->state != ARES_TLS_STATE_EARLYDATA &&
                       tls->state != ARES_TLS_STATE_CONNECT)) {
     return ARES_CONN_ERR_INVALID;
   }
@@ -618,14 +620,51 @@ ares_conn_err_t ares_tlsimp_shutdown(ares_tls_t *tls)
   return tls->last_io_error;
 }
 
+ares_conn_err_t ares_tlsimp_earlydata_write(ares_tls_t *tls,
+                                            const unsigned char *buf,
+                                            size_t *buf_len)
+{
+  int rv;
+  int err;
+
+  if (tls == NULL || (tls->state != ARES_TLS_STATE_INIT &&
+                      tls->state != ARES_TLS_STATE_EARLYDATA)) {
+    return ARES_CONN_ERR_INVALID;
+  }
+
+  if (tls->earlydata_sent_len + *buf_len >
+      ares_tlsimp_get_earlydata_size(tls)) {
+    return ARES_CONN_ERR_TOOLARGE;
+  }
+
+  tls->state = ARES_TLS_STATE_EARLYDATA;
+
+  rv = SSL_write_early_data(tls->ssl, buf, *buf_len, buf_len);
+  if (rv == 1) {
+    tls->earlydata_sent_len += *buf_len;
+    return ARES_CONN_ERR_SUCCESS;
+  }
+
+  err = SSL_get_error(tls->ssl, rv);
+  if (err == SSL_ERROR_WANT_READ || err == SSL_ERROR_WANT_WRITE) {
+    return ARES_CONN_ERR_WOULDBLOCK;
+  }
+
+  tls->state = ARES_TLS_STATE_ERROR;
+  if (tls->last_io_error == ARES_CONN_ERR_SUCCESS) {
+    tls->last_io_error = ARES_CONN_ERR_CONNRESET;
+  }
+  return tls->last_io_error;
+
+}
+
 ares_conn_err_t ares_tlsimp_write(ares_tls_t *tls, const unsigned char *buf,
                                   size_t *buf_len)
 {
   int rv;
   int err;
 
-  if (tls == NULL || (tls->state != ARES_TLS_STATE_INIT &&
-                      tls->state != ARES_TLS_STATE_ESTABLISHED)) {
+  if (tls == NULL || tls->state != ARES_TLS_STATE_ESTABLISHED) {
     return ARES_CONN_ERR_INVALID;
   }
 
@@ -705,7 +744,8 @@ size_t ares_tlsimp_get_earlydata_size(ares_tls_t *tls)
 {
   const SSL_SESSION *sess;
 
-  if (tls == NULL || tls->state != ARES_TLS_STATE_INIT) {
+  if (tls == NULL || (tls->state != ARES_TLS_STATE_INIT &&
+                      tls->state != ARES_TLS_STATE_EARLYDATA)) {
     return 0;
   }
 

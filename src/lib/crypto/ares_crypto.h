@@ -37,8 +37,9 @@
 /*! State of the TLS connection */
 typedef enum {
   ARES_TLS_STATE_INIT         = 0, /*!< Not yet connected or any writes attempted */
-  ARES_TLS_STATE_CONNECT      = 1, /*!< Connection in progress */
-  ARES_TLS_STATE_ESTABLISHED  = 2, /*!< Connection established */
+  ARES_TLS_STATE_EARLYDATA    = 1, /*!< Sending TLSv1.3 Early Data */
+  ARES_TLS_STATE_CONNECT      = 2, /*!< Connection in progress */
+  ARES_TLS_STATE_ESTABLISHED  = 3, /*!< Connection established */
   ARES_TLS_STATE_SHUTDOWN     = 4, /*!< Shutdown in progress */
   ARES_TLS_STATE_DISCONNECTED = 5, /*!< Disconnected */
   ARES_TLS_STATE_ERROR        = 6  /*!< Error */
@@ -97,6 +98,9 @@ ares_tls_state_t        ares_tlsimp_get_state(ares_tls_t *tls);
 ares_tls_stateflag_t    ares_tlsimp_get_stateflag(ares_tls_t *tls);
 size_t                  ares_tlsimp_get_earlydata_size(ares_tls_t *tls);
 void                    ares_tlsimp_destroy(ares_tls_t *tls);
+ares_conn_err_t ares_tlsimp_earlydata_write(ares_tls_t *tls,
+                                            const unsigned char *buf,
+                                            size_t *buf_len);
 ares_conn_err_t         ares_tlsimp_read(ares_tls_t *tls, unsigned char *buf,
                                          size_t *buf_len);
 ares_conn_err_t ares_tlsimp_write(ares_tls_t *tls, const unsigned char *buf,

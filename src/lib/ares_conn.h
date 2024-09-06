@@ -41,7 +41,9 @@ typedef enum {
   ARES_CONN_FLAG_TFO = 1 << 1,
   /*! TCP Fast Open has not yet sent its first packet. Gets unset on first
    *  write to a connection */
-  ARES_CONN_FLAG_TFO_INITIAL = 1 << 2
+  ARES_CONN_FLAG_TFO_INITIAL = 1 << 2,
+  /*! Connection uses TLS */
+  ARES_CONN_FLAG_TLS = 1 << 3
 } ares_conn_flags_t;
 
 typedef enum {
@@ -58,6 +60,7 @@ struct ares_conn {
   struct ares_addr        self_ip;
   ares_conn_flags_t       flags;
   ares_conn_state_flags_t state_flags;
+  void                   *tls;
 
   /*! Outbound buffered data that is not yet sent.  Exists as one contiguous
    *  stream in TCP format (big endian 16bit length prefix followed by DNS
@@ -190,6 +193,7 @@ typedef enum {
   ARES_CONN_ERR_BADADDR      = 13, /*!< Bad Address / Unavailable */
   ARES_CONN_ERR_NOMEM        = 14, /*!< Out of memory */
   ARES_CONN_ERR_INVALID      = 15, /*!< Invalid Usage */
+  ARES_CONN_ERR_TOOLARGE     = 16, /*!< Request size too large */
   ARES_CONN_ERR_FAILURE      = 99  /*!< Generic failure */
 } ares_conn_err_t;
 
@@ -201,6 +205,11 @@ ares_conn_err_t ares_conn_write(ares_conn_t *conn, const void *data, size_t len,
 ares_status_t   ares_conn_flush(ares_conn_t *conn);
 ares_conn_err_t ares_conn_read(ares_conn_t *conn, void *data, size_t len,
                                size_t *read_bytes);
+ares_status_t ares_conn_interpret_events(ares_fd_events_t **out,
+                                         ares_channel_t *channel,
+                                         const ares_fd_events_t *events,
+                                         size_t *nevents);
+ares_conn_t *ares_conn_from_fd(ares_channel_t *channel, ares_socket_t fd);
 void            ares_conn_sock_state_cb_update(ares_conn_t            *conn,
                                                ares_conn_state_flags_t flags);
 ares_conn_err_t ares_socket_recv(ares_channel_t *channel, ares_socket_t s,
