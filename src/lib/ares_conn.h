@@ -64,7 +64,7 @@ struct ares_conn {
   struct ares_addr        self_ip;
   ares_conn_flags_t       flags;
   ares_conn_state_flags_t state_flags;
-  void                   *tls;
+  ares_tls_t             *tls;
 
   /*! Outbound buffered data that is not yet sent.  Exists as one contiguous
    *  stream in TCP format (big endian 16bit length prefix followed by DNS
