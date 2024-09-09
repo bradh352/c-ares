@@ -187,9 +187,9 @@ ares_status_t   ares_conn_interpret_events(ares_fd_events_t      **out,
                                            ares_channel_t         *channel,
                                            const ares_fd_events_t *events,
                                            size_t                 *nevents);
-ares_conn_t    *ares_conn_from_fd(ares_channel_t *channel, ares_socket_t fd);
-void            ares_conn_sock_state_cb_update(ares_conn_t            *conn,
-                                               ares_conn_state_flags_t flags);
+ares_conn_t *ares_conn_from_fd(const ares_channel_t *channel, ares_socket_t fd);
+void         ares_conn_sock_state_cb_update(ares_conn_t            *conn,
+                                            ares_conn_state_flags_t flags);
 ares_conn_err_t ares_socket_recv(ares_channel_t *channel, ares_socket_t s,
                                  ares_bool_t is_tcp, void *data,
                                  size_t data_len, size_t *read_bytes);

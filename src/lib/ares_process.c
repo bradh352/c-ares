@@ -930,7 +930,7 @@ static void ares_probe_failed_server(ares_channel_t      *channel,
                                      const ares_server_t *server,
                                      const ares_query_t  *query)
 {
-  const ares_server_t *last_server  = ares_slist_last_val(channel->servers);
+  const ares_server_t *last_server = ares_slist_last_val(channel->servers);
   unsigned short       r;
   ares_timeval_t       now;
   ares_slist_node_t   *node;
@@ -978,9 +978,8 @@ static void ares_probe_failed_server(ares_channel_t      *channel,
    * use the server in question */
   probe_server->probe_pending = ARES_TRUE;
   ares_send_nolock(channel, probe_server,
-                   ARES_SEND_FLAG_NOCACHE|ARES_SEND_FLAG_NORETRY,
+                   ARES_SEND_FLAG_NOCACHE | ARES_SEND_FLAG_NORETRY,
                    query->query, server_probe_cb, NULL, NULL);
-
 }
 
 static size_t ares_calc_query_timeout(const ares_query_t   *query,
@@ -1110,8 +1109,7 @@ static ares_status_t ares_conn_query_write(ares_conn_t          *conn,
 }
 
 ares_status_t ares_send_query(ares_server_t *requested_server,
-                              ares_query_t *query,
-                              const ares_timeval_t *now)
+                              ares_query_t *query, const ares_timeval_t *now)
 {
   ares_channel_t *channel = query->channel;
   ares_server_t  *server;
