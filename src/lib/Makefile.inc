@@ -48,6 +48,7 @@ CSOURCES = ares_addrinfo2hostent.c	\
   dsa/ares_array.c			\
   dsa/ares_htable.c			\
   dsa/ares_htable_asvp.c		\
+  dsa/ares_htable_dict.c		\
   dsa/ares_htable_strvp.c		\
   dsa/ares_htable_szvp.c		\
   dsa/ares_htable_vpstr.c		\
@@ -91,7 +92,8 @@ CSOURCES = ares_addrinfo2hostent.c	\
   util/ares_threads.c			\
   util/ares_timeval.c			\
   util/ares_math.c			\
-  util/ares_rand.c
+  util/ares_rand.c			\
+  util/ares_uri.c
 
 HHEADERS = ares_android.h			\
   ares_conn.h				\
@@ -110,6 +112,7 @@ HHEADERS = ares_android.h			\
   include/ares_array.h			\
   include/ares_buf.h			\
   include/ares_htable_asvp.h		\
+  include/ares_htable_dict.h		\
   include/ares_htable_strvp.h		\
   include/ares_htable_szvp.h		\
   include/ares_htable_vpstr.h		\
@@ -124,4 +127,5 @@ HHEADERS = ares_android.h			\
   util/ares_math.h			\
   util/ares_rand.h			\
   util/ares_time.h			\
+  util/ares_uri.h			\
   thirdparty/apple/dnsinfo.h
