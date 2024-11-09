@@ -157,7 +157,7 @@ static ares_status_t init_by_defaults(ares_channel_t *channel)
     addr.family            = AF_INET;
     addr.addr.addr4.s_addr = htonl(INADDR_LOOPBACK);
 
-    rc = ares_sconfig_append(&sconfig, &addr, 0, 0, NULL);
+    rc = ares_sconfig_append(channel, &sconfig, &addr, 0, 0, NULL);
     if (rc != ARES_SUCCESS) {
       goto error; /* LCOV_EXCL_LINE: OutOfMemory */
     }
@@ -351,6 +351,8 @@ int ares_init_options(ares_channel_t           **channelptr,
     goto done;
   }
 
+  ares_set_socket_functions_def(channel);
+
   /* Initialize the event thread */
   if (channel->optmask & ARES_OPT_EVENT_THREAD) {
     ares_event_thread_t *e = NULL;
@@ -487,14 +489,16 @@ int ares_dup(ares_channel_t **dest, const ares_channel_t *src)
   ares_channel_lock(src);
   /* Now clone the options that ares_save_options() doesn't support, but are
    * user-provided */
-  (*dest)->sock_create_cb       = src->sock_create_cb;
-  (*dest)->sock_create_cb_data  = src->sock_create_cb_data;
-  (*dest)->sock_config_cb       = src->sock_config_cb;
-  (*dest)->sock_config_cb_data  = src->sock_config_cb_data;
-  (*dest)->sock_funcs           = src->sock_funcs;
-  (*dest)->sock_func_cb_data    = src->sock_func_cb_data;
-  (*dest)->server_state_cb      = src->server_state_cb;
-  (*dest)->server_state_cb_data = src->server_state_cb_data;
+  (*dest)->sock_create_cb            = src->sock_create_cb;
+  (*dest)->sock_create_cb_data       = src->sock_create_cb_data;
+  (*dest)->sock_config_cb            = src->sock_config_cb;
+  (*dest)->sock_config_cb_data       = src->sock_config_cb_data;
+  memcpy(&(*dest)->sock_funcs, &(src->sock_funcs), sizeof((*dest)->sock_funcs));
+  (*dest)->sock_func_cb_data         = src->sock_func_cb_data;
+  (*dest)->legacy_sock_funcs         = src->legacy_sock_funcs;
+  (*dest)->legacy_sock_funcs_cb_data = src->legacy_sock_funcs_cb_data;
+  (*dest)->server_state_cb           = src->server_state_cb;
+  (*dest)->server_state_cb_data      = src->server_state_cb_data;
 
   ares_strcpy((*dest)->local_dev_name, src->local_dev_name,
               sizeof((*dest)->local_dev_name));
