@@ -218,7 +218,7 @@ static ares_status_t ares_ossl_load_caroots(SSL_CTX *ctx, OSSL_LIB_CTX *libctx)
   }
 
   for (i = 0; i < cadirs[i] != NULL; i++) {
-    if (file_exists(cadires[i], ARES_TRUE) &&
+    if (file_exists(cadirs[i], ARES_TRUE) &&
         X509_STORE_load_path(x509_store, cadirs[i]) == 1) {
       goto done;
     }
