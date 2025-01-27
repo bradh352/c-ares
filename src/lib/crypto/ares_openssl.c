@@ -217,14 +217,14 @@ static ares_status_t ares_ossl_load_caroots(SSL_CTX *ctx, OSSL_LIB_CTX *libctx)
     return ARES_ENOMEM;
   }
 
-  for (i = 0; i < cadirs[i] != NULL; i++) {
-    if (file_exists(cadires[i], ARES_TRUE) &&
+  for (i = 0; cadirs[i] != NULL; i++) {
+    if (file_exists(cadirs[i], ARES_TRUE) &&
         X509_STORE_load_path(x509_store, cadirs[i]) == 1) {
       goto done;
     }
   }
 
-  for (i = 0; i < cafile_paths[i] != NULL; i++) {
+  for (i = 0; cafile_paths[i] != NULL; i++) {
     if (file_exists(cafile_paths[i], ARES_FALSE) &&
         X509_STORE_load_file_ex(x509_store, cafile_paths[i], libctx, NULL) ==
           1) {
