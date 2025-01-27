@@ -154,6 +154,12 @@ TEST_F(LibraryTest, InetNetPtoN) {
   CheckPtoN4(2 * 8, 0x01020000, "0x0102/16");
   CheckPtoN4(4 * 8, 0x02030405, "02.3.4.5");
 
+  // Partially specified
+  // (ensures 4 octets are properly zeroed)
+  a4.s_addr = 0xFFFFFFFF;
+  ares_inet_net_pton(AF_INET, "10/8", &a4, sizeof(a4));
+  EXPECT_EQ(htonl(0x0A000000), a4.s_addr);
+
   EXPECT_EQ(16 * 8, ares_inet_net_pton(AF_INET6, "::", &a6, sizeof(a6)));
   EXPECT_EQ(16 * 8, ares_inet_net_pton(AF_INET6, "::1", &a6, sizeof(a6)));
   EXPECT_EQ(16 * 8, ares_inet_net_pton(AF_INET6, "1234:5678::", &a6, sizeof(a6)));
@@ -299,6 +305,7 @@ TEST_F(LibraryTest, SlistMisuse) {
   EXPECT_EQ(NULL, ares_slist_node_claim(NULL));
 }
 
+#if !defined(_WIN32) || _WIN32_WINNT >= 0x0600
 TEST_F(LibraryTest, IfaceIPs) {
   ares_status_t      status;
   ares_iface_ips_t *ips = NULL;
@@ -354,6 +361,7 @@ TEST_F(LibraryTest, IfaceIPs) {
 
   ares_iface_ips_destroy(ips);
 }
+#endif
 
 TEST_F(LibraryTest, HtableMisuse) {
   EXPECT_EQ(NULL, ares_htable_create(NULL, NULL, NULL, NULL));
