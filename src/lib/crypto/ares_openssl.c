@@ -171,14 +171,11 @@ static ares_bool_t file_exists(const char *path, ares_bool_t is_directory)
 {
 #    ifdef HAVE_STAT
   struct stat st;
-  if (stat(filename, &st) != 0) {
+  if (stat(path, &st) != 0) {
     return ARES_FALSE;
   }
-#    elif defined(_WIN32)
-  struct _stat st;
-  if (_stat(filename, &st) != 0) {
-    return ARES_FALSE;
-  }
+#    else
+#      error "Need stat() function for crypto subsystem with OpenSSL."
 #    endif
   if (is_directory) {
     if (st.st_mode & S_IFDIR) {
