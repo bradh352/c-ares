@@ -121,6 +121,44 @@ Goal: a server flagged for TLS completes queries end-to-end (handshake,
 framed query/response, graceful shutdown), with session resumption and early
 data working.  All items assume the defect list above is fixed first.
 
+### Step 0: standalone backend test harness (testability before integration)
+
+The backend's only coupling to the rest of c-ares is the custom BIO calling
+`ares_conn_read()` / `ares_conn_write()`.  Making that boundary injectable
+lets every backend function be exercised in CI *before* any connection
+integration exists, so the defect fixes and state-machine work get red/green
+feedback immediately instead of waiting for the full hookup:
+
+- [ ] **I/O seam**: `ares_tls_t` gets read/write callback pointers + arg
+      instead of calling `ares_conn_read()`/`ares_conn_write()` directly;
+      `ares_tlsimp_create()` keeps today's behavior by installing the conn
+      functions, and a create-variant (or test hook) accepts explicit
+      callbacks.  Zero production behavior change, tiny diff.
+- [ ] **Socketpair harness (gtest, `CARES_CRYPTO=ON` leg)**: client backend
+      on one end of a `socketpair()`, a plain OpenSSL *server* `SSL_CTX`
+      driven directly by the test on the other end (the test binary already
+      links OpenSSL in crypto builds).  Non-blocking on both ends so the
+      WANT_READ/WANT_WRITE paths actually execute.  Coverage targets:
+      - handshake to ESTABLISHED, want-flag publication at every state
+      - framed write/read round-trip, partial/repeated writes
+      - graceful shutdown, abrupt peer close, mid-handshake close
+      - certificate verification success/mismatch (runtime-generated CA)
+      - session resumption on a second connection (cache hit, single-use
+        ticket removal)
+      - TLS v1.3 Early Data: accepted (server reads 0-RTT flight) and
+        rejected (`SSL_EARLY_DATA_REJECTED` -> caller replay contract)
+- [ ] **Pure unit tests** (no seam needed, available as soon as defects are
+      fixed): session cache insert/get/remove/claim + refcount behavior;
+      `ares_conn_interpret_events()` mapping matrix (needs only a minimal
+      conn struct with flags + a tls handle).
+- [ ] **Live smoke check** (optional, not CI-gated): tiny dev tool or
+      live-guarded test dialing a public resolver (1.1.1.1:853) through the
+      seam — handshake + one framed query — to reality-check against real
+      deployments before `adig` can speak DoT.
+
+The Phase 3 mock-DoT-server work then *extends* this harness (same
+runtime-generated CA and server plumbing) rather than starting from scratch.
+
 - [ ] **Server-level TLS configuration** in `ares_server_t` /
       `ares_sconfig_t`: `use_tls` flag, TLS port (default **853**, RFC 7858),
       optional authentication name (hostname for SNI + certificate
@@ -237,24 +275,24 @@ data working.  All items assume the defect list above is fixed first.
       (strict DoT server unreachable -> fall back to plaintext or fail?
       Strict must not silently fall back; opportunistic may).
 
-## Phase 3 — Testing
+## Phase 3 — Testing (full-stack; extends the Phase 1 Step 0 harness)
 
-- [ ] **Unit**: session cache insert/get/remove/claim + refcounts
-      (alloc-fail loop per repo convention is *not* required);
-      `ares_conn_interpret_events()` mapping matrix (all four want-flags x
-      both fd events, non-TLS passthrough, zero-event suppression).
+Backend-level coverage (state machine, resumption, early data accept/reject)
+already exists from Phase 1 Step 0; this phase covers the integrated stack.
+
 - [ ] **Mock DoT server**: extend the gmock test server with a TLS
-      variant when built `CARES_CRYPTO=ON` — runtime-generated self-signed
-      CA + server cert, a test hook to inject the CA (or
-      `verify=none`) into the client ctx.  Covers: handshake, framed
-      query/response, server-initiated close, mid-handshake close,
-      handshake timeout, certificate mismatch in strict vs opportunistic
-      mode, session resumption on second connection.
-- [ ] **Early data test**: server `SSL_CTX_set_max_early_data()`; verify
-      the second connection sends the query as early data (observable via
-      server-side `SSL_read_early_data()`), and the rejection path
-      (server configured to reject 0-RTT) re-sends the query correctly —
-      no lost or duplicated query.
+      variant when built `CARES_CRYPTO=ON`, reusing the Step 0
+      runtime-generated CA/server-cert plumbing, with a test hook to
+      inject the CA (or `verify=none`) into the client ctx.  Covers via
+      real `ares_query()` traffic: handshake, framed query/response,
+      server-initiated close, mid-handshake close, handshake timeout,
+      certificate mismatch in strict vs opportunistic mode, session
+      resumption on second connection.
+- [ ] **Early data through the channel**: verify the second connection
+      sends the first query as early data (observable via server-side
+      `SSL_read_early_data()`), and the rejection path re-sends the query
+      correctly — no lost or duplicated query, correct response
+      correlation.
 - [ ] **Event-loop integration**: run the mock-TLS suite under all event
       backends (epoll/kqueue/poll/select/IOCP configurations CI already
       exercises) — the want-flag remapping is exactly the kind of thing
@@ -290,3 +328,6 @@ data working.  All items assume the defect list above is fixed first.
 - 2026-07-08: branch squashed onto current main (`513601c3`); this
   document added.  State: building blocks only, feature inert; defect list
   and phased plan recorded above.
+- 2026-07-08: added Phase 1 Step 0 — standalone backend test harness via an
+  I/O seam at the BIO boundary, so the backend is fully testable in CI
+  before connection integration begins.
