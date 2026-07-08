@@ -171,14 +171,20 @@ Prerequisites (beyond the **[pre-harness]** defect fixes above):
         needed
       - TLS v1.3 Early Data: accepted (server reads 0-RTT flight) and
         rejected (`SSL_EARLY_DATA_REJECTED` -> caller replay contract)
-
-Note: `ares_conn_interpret_events()` is *not* exercised by this harness (it
-runs only in the process loop); its coverage comes from the Phase 3
-full-stack tests across event backends — tracked there so it doesn't fall
-through the cracks.
+      - `ares_conn_interpret_events()` remapping: register the fake conn in
+        `channel->connnode_by_socket` (llist node + htable insert, same
+        internals the production register path uses) so
+        `ares_conn_from_fd()` resolves it, drive the real TLS session into
+        each blocked state over the socketpair (empty pipe ->
+        READ_WANTREAD, filled pipe -> WRITE_WANTWRITE, stalled handshake ->
+        connect want-flags once that defect fix lands), and assert the
+        remapped event output — plus non-TLS passthrough and unknown-fd /
+        zero-event handling.
 
 The Phase 3 mock-DoT-server work then *extends* this harness (same
-runtime-generated CA and server plumbing) rather than starting from scratch.
+runtime-generated CA and server plumbing) rather than starting from scratch;
+Phase 3 also re-exercises the event remapping through the real process loop
+across all event backends.
 
 - [ ] **Server-level TLS configuration** in `ares_server_t` /
       `ares_sconfig_t`: `use_tls` flag, TLS port (default **853**, RFC 7858),
@@ -301,10 +307,11 @@ runtime-generated CA and server plumbing) rather than starting from scratch.
 Backend-level coverage (state machine, resumption, early data accept/reject)
 already exists from Phase 1 Step 0; this phase covers the integrated stack.
 
-- [ ] **`ares_conn_interpret_events()` coverage** (from Step 0 note): the
-      want-flag event remapping runs only in the process loop, so it is
-      validated here — the mock-TLS suite across all event backends plus a
-      direct mapping-matrix test against a channel-owned TLS connection.
+- [ ] **`ares_conn_interpret_events()` through the real process loop**:
+      Step 0 covers the mapping logic directly; this validates it embedded
+      in `ares_process_fds()` across all event backends via the mock-TLS
+      suite (per-backend timing differences are where remapping bugs
+      surface).
 - [ ] **Mock DoT server**: extend the gmock test server with a TLS
       variant when built `CARES_CRYPTO=ON`, reusing the Step 0
       runtime-generated CA/server-cert plumbing, with a test hook to
