@@ -294,8 +294,8 @@ static int ares_ossl_bio_write_ex(BIO *b, const char *buf, size_t len,
   }
 
   if (tls->last_io_error == ARES_CONN_ERR_WOULDBLOCK) {
-    /* Error is non-fatal, set the reason as need to retry read events */
-    BIO_set_retry_read(b);
+    /* Error is non-fatal, set the reason as need to retry write events */
+    BIO_set_retry_write(b);
   }
 
   return 0;
@@ -413,14 +413,12 @@ ares_status_t ares_cryptoimp_ctx_init(ares_cryptoimp_ctx_t **ctx,
     status = ARES_ENOMEM;
     goto done;
   }
-  fprintf(stderr, "%s(): initialized library ctx\n", __FUNCTION__);
   /* Load default provider */
   (*ctx)->default_provider = OSSL_PROVIDER_load((*ctx)->ctx, "default");
   if ((*ctx)->default_provider == NULL) {
     status = ARES_ENOMEM;
     goto done;
   }
-  fprintf(stderr, "%s(): loaded default provider\n", __FUNCTION__);
 
   /* Create SSL Client CTX */
   (*ctx)->sslctx = SSL_CTX_new_ex((*ctx)->ctx, NULL, TLS_client_method());
@@ -428,14 +426,12 @@ ares_status_t ares_cryptoimp_ctx_init(ares_cryptoimp_ctx_t **ctx,
     status = ARES_ENOMEM;
     goto done;
   }
-  fprintf(stderr, "%s(): created new client ctx\n", __FUNCTION__);
 
   /* Load root certificates into client ctx */
   status = ares_ossl_load_caroots((*ctx)->sslctx, (*ctx)->ctx);
   if (status != ARES_SUCCESS) {
     goto done;
   }
-  fprintf(stderr, "%s(): loaded ca certificates\n", __FUNCTION__);
 
   SSL_CTX_set_read_ahead((*ctx)->sslctx, 1);
   SSL_CTX_set_app_data((*ctx)->sslctx, *ctx);
@@ -455,7 +451,6 @@ ares_status_t ares_cryptoimp_ctx_init(ares_cryptoimp_ctx_t **ctx,
     status = ARES_ENOMEM;
     goto done;
   }
-  fprintf(stderr, "%s(): created bio\n", __FUNCTION__);
 
   status = ARES_SUCCESS;
 
@@ -499,9 +494,11 @@ ares_status_t ares_tlsimp_create(ares_tls_t          **tls,
   bio = BIO_new(crypto_ctx->bio_method);
   if (bio == NULL) {
     status = ARES_ENOMEM;
+    goto done;
   }
 
   BIO_set_data(bio, state);
+  /* SSL object owns the bio (both directions) from here on */
   SSL_set_bio(state->ssl, bio, bio);
 
   /* Set hostname for peer verification */

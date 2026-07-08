@@ -74,7 +74,7 @@ currently unreachable, so nothing is user-visible today).  Items tagged
 harness can produce signal; everything else is verified *by* the harness or
 deferred to its phase:
 
-- [ ] **[pre-harness]** `ares_crypto_ctx_init()` never creates `sess_rev`, so
+- [x] **[pre-harness]** `ares_crypto_ctx_init()` never creates `sess_rev`, so
       `ares_tls_session_insert()` always fails at the reverse insert —
       session caching (and therefore resumption and early data) cannot work.
 - [ ] `ares_tls_session_key()`: hostname component is a `TODO` (literal
@@ -86,10 +86,10 @@ deferred to its phase:
       callback) is dropped via `ares_htable_strvp_claim()` on removal
       without an `SSL_SESSION_free()`, which leaks a reference when a
       cached session is consumed by `ares_tlsimp_create()`.
-- [ ] **[pre-harness]** `ares_ossl_bio_write_ex()` sets
+- [x] **[pre-harness]** `ares_ossl_bio_write_ex()` sets
       `BIO_set_retry_read()` on WOULDBLOCK; must be
       `BIO_set_retry_write()`.
-- [ ] **[pre-harness]** `ares_tlsimp_create()`: `bio == NULL` sets
+- [x] **[pre-harness]** `ares_tlsimp_create()`: `bio == NULL` sets
       `ARES_ENOMEM` but is missing `goto done`, falling through to
       `BIO_set_data(NULL, ...)`; also a `bio` leak if failure occurs before
       `SSL_set_bio()`.
@@ -106,7 +106,7 @@ deferred to its phase:
       decrypted data can be pending with no fd readable event.  The read
       path must drain until WOULDBLOCK (and/or consult `SSL_pending()`)
       before re-arming on fd events, or responses will sit unread.
-- [ ] **[pre-harness]** Debug `fprintf(stderr, ...)` calls left in
+- [x] **[pre-harness]** Debug `fprintf(stderr, ...)` calls left in
       `ares_cryptoimp_ctx_init()`.
 - [ ] `SSL_CTX_set_security_level(3)` rejects RSA < 3072-bit server
       certificates; several real-world resolvers still use RSA-2048.
@@ -142,13 +142,14 @@ feedback in CI immediately.
 
 Prerequisites (beyond the **[pre-harness]** defect fixes above):
 
-- [ ] **Test-reachable entry point**: `struct ares_crypto_ctx` is opaque
+- [x] **Test-reachable entry point**: `struct ares_crypto_ctx` is opaque
       outside `ares_crypto.c`, so a test holding `channel->crypto_ctx`
       cannot reach the `imp_ctx` that `ares_tlsimp_create()` takes.  Add a
       thin generic wrapper (e.g. `ares_tls_create(crypto_ctx, conn)`)
       dereferencing internally — the Phase 1 connection integration needs
       this entry point anyway, so it is not test-only scaffolding.
-- [ ] **Test build plumbing**: link OpenSSL into `arestest` when
+- [x] **Test build plumbing** (CMake done; CI legs pending): link
+      OpenSSL into `arestest` when
       `CARES_CRYPTO=ON` (the harness drives a server `SSL_CTX` directly)
       and add a `CARES_CRYPTO=ON` CI leg (ubuntu first; ASAN variant early
       since the harness is what demonstrates the session refcount leak).
@@ -360,6 +361,10 @@ already exists from Phase 1 Step 0; this phase covers the integrated stack.
 - 2026-07-08: branch squashed onto current main (`513601c3`); this
   document added.  State: building blocks only, feature inert; defect list
   and phased plan recorded above.
+- 2026-07-08: pre-harness fixes landed: sess_rev creation, BIO retry-write
+  flag, tlsimp_create missing goto, debug fprintf removal, generic
+  ares_tls_create() entry point, OpenSSL linkage for arestest in CMake
+  crypto builds.  CI legs still pending (workflow changes done separately).
 - 2026-07-08: added Phase 1 Step 0 — standalone backend test harness so the
   backend is fully testable in CI before connection integration begins.
   Simplified after review: no I/O seam needed (a minimal fake conn around a

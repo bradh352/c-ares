@@ -61,6 +61,23 @@ typedef struct ares_crypto_ctx ares_crypto_ctx_t;
 
 ares_status_t                  ares_crypto_ctx_init(ares_crypto_ctx_t **ctx);
 void                           ares_crypto_ctx_destroy(ares_crypto_ctx_t *ctx);
+
+struct ares_tls;
+typedef struct ares_tls ares_tls_t;
+
+/*! Create a TLS session object for a connection using the channel's crypto
+ *  context.  This is the generic entry point; it dispatches to the backend
+ *  provider implementation.
+ *
+ *  \param[out] tls        Returned TLS session object
+ *  \param[in]  crypto_ctx Channel crypto context
+ *  \param[in]  conn       Connection the TLS session operates on
+ *  \return ARES_SUCCESS on success, ARES_ENOTIMP if built without crypto
+ *          support, otherwise an ares_status_t error
+ */
+ares_status_t ares_tls_create(ares_tls_t **tls, ares_crypto_ctx_t *crypto_ctx,
+                              ares_conn_t *conn);
+
 ares_status_t ares_tls_session_insert(ares_crypto_ctx_t *crypto_ctx,
                                       ares_conn_t *conn, void *sess);
 ares_status_t ares_tls_session_remove(ares_crypto_ctx_t *crypto_ctx,
@@ -83,9 +100,6 @@ ares_status_t ares_cryptoimp_ctx_init(ares_cryptoimp_ctx_t **ctx,
                                       ares_crypto_ctx_t     *parent);
 void          ares_cryptoimp_ctx_destroy(ares_cryptoimp_ctx_t *ctx);
 
-
-struct ares_tls;
-typedef struct ares_tls ares_tls_t;
 
 ares_status_t           ares_tlsimp_create(ares_tls_t          **tls,
                                            ares_cryptoimp_ctx_t *crypto_ctx,

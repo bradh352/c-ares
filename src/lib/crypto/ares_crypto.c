@@ -62,6 +62,12 @@ ares_status_t ares_crypto_ctx_init(ares_crypto_ctx_t **ctx)
     goto done;
   }
 
+  (*ctx)->sess_rev = ares_htable_vpstr_create();
+  if ((*ctx)->sess_rev == NULL) {
+    status = ARES_ENOMEM;
+    goto done;
+  }
+
 done:
   if (status != ARES_SUCCESS) {
     ares_crypto_ctx_destroy(*ctx);
@@ -179,6 +185,15 @@ ares_status_t ares_tls_session_remove(ares_crypto_ctx_t *crypto_ctx, void *sess)
   ares_htable_vpstr_remove(crypto_ctx->sess_rev, sess);
 
   return ARES_SUCCESS;
+}
+
+ares_status_t ares_tls_create(ares_tls_t **tls, ares_crypto_ctx_t *crypto_ctx,
+                              ares_conn_t *conn)
+{
+  if (tls == NULL || crypto_ctx == NULL || conn == NULL) {
+    return ARES_EFORMERR;
+  }
+  return ares_tlsimp_create(tls, crypto_ctx->imp_ctx, conn);
 }
 
 void *ares_tls_session_get(ares_crypto_ctx_t *crypto_ctx, ares_conn_t *conn)
