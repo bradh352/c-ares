@@ -61,6 +61,7 @@
 #include "util/ares_threads.h"
 #include "ares_socket.h"
 #include "ares_conn.h"
+#include "crypto/ares_crypto.h"
 #include "ares_str.h"
 #include "str/ares_strsplit.h"
 #include "ares_punycode.h"
@@ -301,6 +302,9 @@ struct ares_channeldata {
    * exit. */
   ares_bool_t                         reinit_pending;
   ares_thread_t                      *reinit_thread;
+
+  /* Crypto subsystem state */
+  ares_crypto_ctx_t                  *crypto_ctx;
 
   /* Whether the system is up or not.  This is mainly to prevent deadlocks
    * and access violations during the cleanup process.  Some things like

@@ -44,6 +44,7 @@ OPTION (CARES_SYMBOL_HIDING "Hide private symbols in shared libraries"          
 OPTION (CARES_THREADS       "Build with thread-safety support"                                      ON)
 OPTION (CARES_COVERAGE      "Build for code coverage"                                               OFF)
 OPTION (CARES_WERROR        "Treat compiler warnings on the c-ares library as errors"               OFF)
+OPTION (CARES_CRYPTO        "Build with crypto support (needed for DoT)"                            OFF)
 SET    (CARES_RANDOM_FILE "/dev/urandom" CACHE STRING "Suitable File / Device Path for entropy, such as /dev/urandom")
 
 # Tests require static to be enabled on Windows to be able to access otherwise hidden symbols
@@ -713,6 +714,16 @@ IF (HAVE_ARPA_NAMESER_H)
 ENDIF()
 IF (HAVE_ARPA_NAMESER_COMPAT_H)
 	SET (CARES_HAVE_ARPA_NAMESER_COMPAT_H 1)
+ENDIF()
+
+# Crypto support (needed for DoT)
+IF (CARES_CRYPTO)
+	FIND_PACKAGE(OpenSSL REQUIRED)
+	IF (OPENSSL_VERSION VERSION_LESS "3.0.0")
+		MESSAGE(FATAL_ERROR "OpenSSL v3 or higher required")
+	ENDIF()
+	SET (CARES_USE_CRYPTO 1)
+	SET (CARES_CRYPTO_OPENSSL 1)
 ENDIF()
 
 # Coverage

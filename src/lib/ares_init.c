@@ -276,6 +276,11 @@ int ares_init_options(ares_channel_t           **channelptr,
     goto done;
   }
 
+  status = ares_crypto_ctx_init(&channel->crypto_ctx);
+  if (status != ARES_SUCCESS) {
+    goto done;
+  }
+
   /* Generate random key */
   channel->rand_state = ares_init_rand_state();
   if (channel->rand_state == NULL) {

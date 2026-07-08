@@ -31,6 +31,8 @@
 struct ares_conn;
 typedef struct ares_conn ares_conn_t;
 
+#include "crypto/ares_crypto.h"
+
 struct ares_server;
 typedef struct ares_server ares_server_t;
 
@@ -49,7 +51,9 @@ typedef enum {
    *  it).  Its in-flight queries continue to drain and it is cleaned up once
    *  idle.  This is a per-connection signal so that a transient failure does
    *  not evict otherwise-healthy connections to the same server. */
-  ARES_CONN_FLAG_NONEW = 1 << 3
+  ARES_CONN_FLAG_NONEW = 1 << 3,
+  /*! Connection uses TLS */
+  ARES_CONN_FLAG_TLS = 1 << 4
 } ares_conn_flags_t;
 
 typedef enum {
@@ -66,6 +70,7 @@ struct ares_conn {
   struct ares_addr        self_ip;
   ares_conn_flags_t       flags;
   ares_conn_state_flags_t state_flags;
+  ares_tls_t             *tls;
 
   /*! Outbound buffered data that is not yet sent.  Exists as one contiguous
    *  stream in TCP format (big endian 16bit length prefix followed by DNS
@@ -184,6 +189,10 @@ ares_conn_err_t ares_conn_write(ares_conn_t *conn, const void *data, size_t len,
 ares_status_t ares_conn_flush(ares_conn_t *conn);
 ares_conn_err_t ares_conn_read(ares_conn_t *conn, void *data, size_t len,
                                size_t *read_bytes);
+ares_status_t   ares_conn_interpret_events(ares_fd_events_t      **out,
+                                           ares_channel_t         *channel,
+                                           const ares_fd_events_t *events,
+                                           size_t                 *nevents);
 ares_conn_t *ares_conn_from_fd(const ares_channel_t *channel, ares_socket_t fd);
 void ares_conn_sock_state_cb_update(ares_conn_t            *conn,
                                     ares_conn_state_flags_t flags);

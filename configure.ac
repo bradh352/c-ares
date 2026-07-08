@@ -51,6 +51,7 @@ AC_PROG_EGREP
 AC_PROG_INSTALL
 AC_CANONICAL_HOST
 AX_COMPILER_VENDOR
+PKG_PROG_PKG_CONFIG
 
 AC_MSG_CHECKING([whether this is native windows])
 ac_cv_native_windows=no
@@ -118,6 +119,11 @@ AC_ARG_ENABLE(cares-threads,
   AS_HELP_STRING([--disable-cares-threads], [Disable building of thread safety support]),
   [ CARES_THREADS=${enableval} ],
   [ CARES_THREADS=yes ])
+
+AC_ARG_ENABLE(cares-crypto,
+  AS_HELP_STRING([--enable-cares-crypto], [Enable building of crypto support (needed for DoT)]),
+  [ CARES_CRYPTO=${enableval} ],
+  [ CARES_CRYPTO=no ])
 
 AC_ARG_WITH(random,
   AS_HELP_STRING([--with-random=FILE],
@@ -782,6 +788,24 @@ if test "x$ac_cv_header_arpa_nameser_compa_h" = "xyes" ; then
   CARES_DEFINE_UNQUOTED([CARES_HAVE_ARPA_NAMESER_COMPA_H],[1])
 fi
 
+dnl ------------ CRYPTO --------------
+if test "${CARES_CRYPTO}" = "yes" ; then
+  PKG_CHECK_MODULES([openssl], [openssl >= 3.0.0],
+    [  ],
+    [ AC_MSG_ERROR([OpenSSL v3.0.0 or higher not found]) ]
+  )
+
+  AC_DEFINE([CARES_USE_CRYPTO], 1, [Define to 1 to enable the c-ares cryptographic subsystem])
+  AC_DEFINE([CARES_CRYPTO_OPENSSL], 1, [Define to 1 to use OpenSSL for c-ares crypto])
+  CARES_CRYPTO_CPPFLAGS="${openssl_CFLAGS}"
+  CARES_CRYPTO_LIBS="${openssl_LIBS}"
+  if test "x$host_vendor" = "xapple" ; then
+    CARES_CRYPTO_LDFLAGS="-framework CoreFoundation -framework Security"
+  fi
+  AC_SUBST(CARES_CRYPTO_CPPFLAGS)
+  AC_SUBST(CARES_CRYPTO_LIBS)
+  AC_SUBST(CARES_CRYPTO_LDFLAGS)
+fi
 
 dnl ------------ THREADING --------------
 

@@ -509,3 +509,60 @@ ares_conn_t *ares_conn_from_fd(const ares_channel_t *channel, ares_socket_t fd)
 
   return ares_llist_node_val(node);
 }
+
+ares_status_t ares_conn_interpret_events(ares_fd_events_t      **out,
+                                         ares_channel_t         *channel,
+                                         const ares_fd_events_t *events,
+                                         size_t                 *nevents)
+{
+  size_t i;
+  size_t orig_events = *nevents;
+
+  if (orig_events == 0 || events == NULL || nevents == NULL || out == NULL) {
+    return ARES_EFORMERR;
+  }
+
+  *out     = NULL;
+  *nevents = 0;
+
+  *out = ares_malloc_zero(sizeof(**out) * orig_events);
+  if (*out == NULL) {
+    return ARES_ENOMEM;
+  }
+
+  for (i = 0; i < orig_events; i++) {
+    ares_tls_stateflag_t sf;
+    ares_conn_t         *conn = ares_conn_from_fd(channel, events[i].fd);
+
+    if (conn == NULL || events[i].events == ARES_FD_EVENT_NONE) {
+      continue;
+    }
+
+    (*out)[*nevents].fd = events[i].fd;
+    if (!(conn->flags & ARES_CONN_FLAG_TLS)) {
+      (*out)[*nevents].events = events[i].events;
+      (*nevents)++;
+      continue;
+    }
+
+    sf = ares_tlsimp_get_stateflag(conn->tls);
+    if (events[i].events & ARES_FD_EVENT_READ) {
+      if (sf & ARES_TLS_SF_READ_WANTREAD) {
+        (*out)[*nevents].events |= ARES_FD_EVENT_READ;
+      }
+      if (sf & ARES_TLS_SF_WRITE_WANTREAD) {
+        (*out)[*nevents].events |= ARES_FD_EVENT_WRITE;
+      }
+    }
+    if (events[i].events & ARES_FD_EVENT_WRITE) {
+      if (sf & ARES_TLS_SF_READ_WANTWRITE) {
+        (*out)[*nevents].events |= ARES_FD_EVENT_READ;
+      }
+      if (sf & ARES_TLS_SF_WRITE_WANTWRITE) {
+        (*out)[*nevents].events |= ARES_FD_EVENT_WRITE;
+      }
+    }
+    (*nevents)++;
+  }
+  return ARES_SUCCESS;
+}

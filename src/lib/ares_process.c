@@ -195,12 +195,21 @@ static ares_status_t ares_process_fds_nolock(ares_channel_t         *channel,
                                              const ares_fd_events_t *events,
                                              size_t nevents, unsigned int flags)
 {
-  ares_timeval_t now;
-  size_t         i;
-  ares_status_t  status = ARES_SUCCESS;
+  ares_timeval_t    now;
+  size_t            i;
+  ares_status_t     status = ARES_SUCCESS;
+  ares_fd_events_t *evs    = NULL;
 
   if (channel == NULL || (events == NULL && nevents != 0)) {
     return ARES_EFORMERR; /* LCOV_EXCL_LINE: DefensiveCoding */
+  }
+
+  if (nevents != 0) {
+    status = ares_conn_interpret_events(&evs, channel, events, &nevents);
+    if (status != ARES_SUCCESS) {
+      return status;
+    }
+    events = evs;
   }
 
   ares_tvnow(&now);
@@ -243,6 +252,7 @@ static ares_status_t ares_process_fds_nolock(ares_channel_t         *channel,
   }
 
 done:
+  ares_free(evs);
   if (status == ARES_ENOMEM) {
     return ARES_ENOMEM;
   }
