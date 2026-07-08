@@ -124,37 +124,38 @@ data working.  All items assume the defect list above is fixed first.
 ### Step 0: standalone backend test harness (testability before integration)
 
 The backend's only coupling to the rest of c-ares is the custom BIO calling
-`ares_conn_read()` / `ares_conn_write()`.  Making that boundary injectable
-lets every backend function be exercised in CI *before* any connection
-integration exists, so the defect fixes and state-machine work get red/green
-feedback immediately instead of waiting for the full hookup:
+`ares_conn_read()` / `ares_conn_write()`, and those only require
+`conn->server->channel` (socket functions), `conn->fd`, and correct
+`flags`/`state_flags`.  No production changes are needed to test the backend
+standalone: the fixture creates a real channel via `ares_init()`, a minimal
+fake `ares_server_t`/`ares_conn_t` (internal-struct access is established
+practice in `ares-test-internal.cc`) around one end of a `socketpair()`,
+and calls `ares_tlsimp_create()` on it — exercising the *production*
+BIO -> `ares_conn_*` -> `ares_socket_*` path, error mapping included, before
+any connection-integration code exists.  Every defect fix gets red/green
+feedback in CI immediately.
 
-- [ ] **I/O seam**: `ares_tls_t` gets read/write callback pointers + arg
-      instead of calling `ares_conn_read()`/`ares_conn_write()` directly;
-      `ares_tlsimp_create()` keeps today's behavior by installing the conn
-      functions, and a create-variant (or test hook) accepts explicit
-      callbacks.  Zero production behavior change, tiny diff.
 - [ ] **Socketpair harness (gtest, `CARES_CRYPTO=ON` leg)**: client backend
-      on one end of a `socketpair()`, a plain OpenSSL *server* `SSL_CTX`
-      driven directly by the test on the other end (the test binary already
-      links OpenSSL in crypto builds).  Non-blocking on both ends so the
-      WANT_READ/WANT_WRITE paths actually execute.  Coverage targets:
+      on one end of a `socketpair()` via the fake-conn fixture above, a
+      plain OpenSSL *server* `SSL_CTX` driven directly by the test on the
+      other end (the test binary already links OpenSSL in crypto builds).
+      Non-blocking on both ends so the WANT_READ/WANT_WRITE paths actually
+      execute.  Coverage targets:
       - handshake to ESTABLISHED, want-flag publication at every state
       - framed write/read round-trip, partial/repeated writes
       - graceful shutdown, abrupt peer close, mid-handshake close
       - certificate verification success/mismatch (runtime-generated CA)
-      - session resumption on a second connection (cache hit, single-use
-        ticket removal)
+      - session resumption on a second connection (cache hit through the
+        session cache, single-use ticket removal) — this also covers the
+        `ares_crypto.c` session-cache functions, no separate unit tests
+        needed
       - TLS v1.3 Early Data: accepted (server reads 0-RTT flight) and
         rejected (`SSL_EARLY_DATA_REJECTED` -> caller replay contract)
-- [ ] **Pure unit tests** (no seam needed, available as soon as defects are
-      fixed): session cache insert/get/remove/claim + refcount behavior;
-      `ares_conn_interpret_events()` mapping matrix (needs only a minimal
-      conn struct with flags + a tls handle).
-- [ ] **Live smoke check** (optional, not CI-gated): tiny dev tool or
-      live-guarded test dialing a public resolver (1.1.1.1:853) through the
-      seam — handshake + one framed query — to reality-check against real
-      deployments before `adig` can speak DoT.
+
+Note: `ares_conn_interpret_events()` is *not* exercised by this harness (it
+runs only in the process loop); its coverage comes from the Phase 3
+full-stack tests across event backends — tracked there so it doesn't fall
+through the cracks.
 
 The Phase 3 mock-DoT-server work then *extends* this harness (same
 runtime-generated CA and server plumbing) rather than starting from scratch.
@@ -280,6 +281,10 @@ runtime-generated CA and server plumbing) rather than starting from scratch.
 Backend-level coverage (state machine, resumption, early data accept/reject)
 already exists from Phase 1 Step 0; this phase covers the integrated stack.
 
+- [ ] **`ares_conn_interpret_events()` coverage** (from Step 0 note): the
+      want-flag event remapping runs only in the process loop, so it is
+      validated here — the mock-TLS suite across all event backends plus a
+      direct mapping-matrix test against a channel-owned TLS connection.
 - [ ] **Mock DoT server**: extend the gmock test server with a TLS
       variant when built `CARES_CRYPTO=ON`, reusing the Step 0
       runtime-generated CA/server-cert plumbing, with a test hook to
@@ -328,6 +333,10 @@ already exists from Phase 1 Step 0; this phase covers the integrated stack.
 - 2026-07-08: branch squashed onto current main (`513601c3`); this
   document added.  State: building blocks only, feature inert; defect list
   and phased plan recorded above.
-- 2026-07-08: added Phase 1 Step 0 — standalone backend test harness via an
-  I/O seam at the BIO boundary, so the backend is fully testable in CI
-  before connection integration begins.
+- 2026-07-08: added Phase 1 Step 0 — standalone backend test harness so the
+  backend is fully testable in CI before connection integration begins.
+  Simplified after review: no I/O seam needed (a minimal fake conn around a
+  socketpair drives the production BIO->conn->socket path directly); no
+  separate session-cache/interpret_events unit tests (covered by the
+  harness resumption tests and the Phase 3 full-stack tests respectively);
+  live smoke check dropped.
