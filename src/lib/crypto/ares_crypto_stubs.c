@@ -42,6 +42,15 @@ void ares_cryptoimp_ctx_destroy(ares_cryptoimp_ctx_t *ctx)
   (void)ctx;
 }
 
+ares_status_t ares_tlsimp_set_cadata(ares_cryptoimp_ctx_t *ctx,
+                                     const unsigned char *pem, size_t len)
+{
+  (void)ctx;
+  (void)pem;
+  (void)len;
+  return ARES_ENOTIMP;
+}
+
 ares_status_t ares_tlsimp_create(ares_tls_t          **tls,
                                  ares_cryptoimp_ctx_t *crypto_ctx,
                                  ares_conn_t          *conn)

@@ -82,9 +82,13 @@ void ares_crypto_ctx_destroy(ares_crypto_ctx_t *ctx)
     return;
   }
 
+  /* The backend must be destroyed first: tearing it down flushes its
+   * session cache which calls back into ares_tls_session_remove(), and
+   * that dereferences these tables.  Any sessions still held after the
+   * backend is gone are released by the table destructors. */
+  ares_cryptoimp_ctx_destroy(ctx->imp_ctx);
   ares_htable_strvp_destroy(ctx->sess_fwd);
   ares_htable_vpstr_destroy(ctx->sess_rev);
-  ares_cryptoimp_ctx_destroy(ctx->imp_ctx);
   ares_free(ctx);
 }
 
@@ -181,7 +185,11 @@ ares_status_t ares_tls_session_remove(ares_crypto_ctx_t *crypto_ctx, void *sess)
     return ARES_ENOTFOUND;
   }
 
-  ares_htable_strvp_claim(crypto_ctx->sess_fwd, key);
+  /* Remove (not claim) so the cache's reference on the session is released
+   * via the table's value destructor.  Callers (the backend's cache-removal
+   * callback) hold their own reference for any continued use.  The rev
+   * entry owns `key`, so it must be removed second. */
+  ares_htable_strvp_remove(crypto_ctx->sess_fwd, key);
   ares_htable_vpstr_remove(crypto_ctx->sess_rev, sess);
 
   return ARES_SUCCESS;
@@ -194,6 +202,15 @@ ares_status_t ares_tls_create(ares_tls_t **tls, ares_crypto_ctx_t *crypto_ctx,
     return ARES_EFORMERR;
   }
   return ares_tlsimp_create(tls, crypto_ctx->imp_ctx, conn);
+}
+
+ares_status_t ares_tls_set_cadata(ares_crypto_ctx_t   *crypto_ctx,
+                                  const unsigned char *pem, size_t len)
+{
+  if (crypto_ctx == NULL) {
+    return ARES_EFORMERR;
+  }
+  return ares_tlsimp_set_cadata(crypto_ctx->imp_ctx, pem, len);
 }
 
 void *ares_tls_session_get(ares_crypto_ctx_t *crypto_ctx, ares_conn_t *conn)

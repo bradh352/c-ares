@@ -5,6 +5,11 @@ Tracking document for DoT support in c-ares (upstream feature request:
 `DoT` branch alongside the code and is updated as work progresses; checkboxes
 below are the progress tracker.
 
+Convention: references to this document, its phase/step numbering, or other
+planning artifacts belong here and in commit messages only — never in code
+comments, which must stand on their own (planning references in code grow
+stale the moment the plan moves).
+
 ## Purpose and direction
 
 Implement DNS-over-TLS (RFC 7858) as an optional feature with no hard
@@ -82,10 +87,18 @@ deferred to its phase:
       partial key instead of NULL (missing buf destroy + NULL return).
 - [ ] `ares_tls_session_insert()` leaks `key` when the early parameter
       check returns `ARES_EFORMERR` (key is built before the check).
-- [ ] Session refcount audit: the cache's retained reference (from the new
-      callback) is dropped via `ares_htable_strvp_claim()` on removal
-      without an `SSL_SESSION_free()`, which leaks a reference when a
-      cached session is consumed by `ares_tlsimp_create()`.
+- [x] Session refcount audit: the cache's retained reference (from the new
+      callback) was dropped via `ares_htable_strvp_claim()` on removal
+      without an `SSL_SESSION_free()`, leaking a reference when a cached
+      session was consumed by `ares_tlsimp_create()`.  Fixed:
+      `ares_tls_session_remove()` now removes (releasing the cache's
+      reference through the table destructor) instead of claiming.
+- [x] Teardown ordering crash (found by the test harness on first run):
+      `ares_crypto_ctx_destroy()` destroyed the session tables before the
+      backend, but `SSL_CTX_free()` flushes the session cache and fires the
+      remove callback, which walks those tables — use-after-free on every
+      channel destroy that had cached a session.  Fixed: backend torn down
+      first.
 - [x] **[pre-harness]** `ares_ossl_bio_write_ex()` sets
       `BIO_set_retry_read()` on WOULDBLOCK; must be
       `BIO_set_retry_write()`.
@@ -97,11 +110,13 @@ deferred to its phase:
       early-data block is unreachable (guard above already rejects
       `state != ESTABLISHED`); the early-data flow needs an explicit design
       (see Phase 1) rather than being buried in write.
-- [ ] `ares_tlsimp_connect()` does not set WANT_READ/WANT_WRITE state
+- [x] `ares_tlsimp_connect()` did not set WANT_READ/WANT_WRITE state
       flags, but `ares_conn_interpret_events()` maps events for TLS
       connections *only* via those flags — fd events during the handshake
-      are dropped and the handshake stalls.  Connect (and shutdown, and
-      early-data write) must publish want-flags like read/write do.
+      were dropped and the handshake would stall.  Fixed: connect,
+      shutdown, and early-data write now publish want-flags (connect and
+      shutdown publish both logical directions since handshake progress
+      gates everything).
 - [ ] `SSL_CTX_set_read_ahead(1)` buffers TLS records inside OpenSSL:
       decrypted data can be pending with no fd readable event.  The read
       path must drain until WOULDBLOCK (and/or consult `SSL_pending()`)
@@ -156,7 +171,17 @@ Prerequisites (beyond the **[pre-harness]** defect fixes above):
       Use ECDSA P-256 for generated test certs so the current security
       level 3 setting is satisfied regardless of how that decision lands.
 
-- [ ] **Socketpair harness (gtest, `CARES_CRYPTO=ON` leg)**: client backend
+- [x] **Socketpair harness (gtest, `CARES_CRYPTO=ON` leg)** — landed in
+      `test/ares-test-tls.cc`; delivered coverage: handshake to
+      ESTABLISHED, want-flags (handshake-blocked, read-empty,
+      write-flooded), framed write/read round-trip, graceful shutdown,
+      certificate verification success + untrusted-CA failure, abrupt peer
+      close, and the `ares_conn_interpret_events()` matrix (remap both
+      directions, no-events entry, unknown-fd drop, non-TLS passthrough).
+      Original coverage-target list follows; still to add: mid-handshake
+      close, partial/repeated writes, session resumption, and Early Data
+      accept/reject (blocked on early-data plumbing design):
+      client backend
       on one end of a `socketpair()` via the fake-conn fixture above, a
       plain OpenSSL *server* `SSL_CTX` driven directly by the test on the
       other end (the test binary already links OpenSSL in crypto builds).
@@ -361,6 +386,14 @@ already exists from Phase 1 Step 0; this phase covers the integrated stack.
 - 2026-07-08: branch squashed onto current main (`513601c3`); this
   document added.  State: building blocks only, feature inert; defect list
   and phased plan recorded above.
+- 2026-07-08: test harness landed (`test/ares-test-tls.cc`): fake-conn
+  socketpair fixture with runtime-generated ECDSA CA/server certs, plain
+  OpenSSL server peer, five tests green under normal and ASAN crypto
+  builds.  Enablers added: `ares_tls_set_cadata()` (PEM trust-anchor
+  injection; the unix root loader now uses the ctx cert store so
+  additions take effect uniformly).  Defects fixed: connect/shutdown/
+  early-data want-flag publication, session refcount on removal, and a
+  teardown-ordering use-after-free the harness caught on its first run.
 - 2026-07-08: pre-harness fixes landed: sess_rev creation, BIO retry-write
   flag, tlsimp_create missing goto, debug fprintf removal, generic
   ares_tls_create() entry point, OpenSSL linkage for arestest in CMake

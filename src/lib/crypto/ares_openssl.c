@@ -31,6 +31,8 @@
 #  include <openssl/provider.h>
 #  include <openssl/ssl.h>
 #  include <openssl/bio.h>
+#  include <openssl/pem.h>
+#  include <openssl/err.h>
 
 #  ifdef __APPLE__
 #    include <Security/Security.h>
@@ -207,17 +209,20 @@ static ares_status_t ares_ossl_load_caroots(SSL_CTX *ctx, OSSL_LIB_CTX *libctx)
     NULL
   };
   size_t      i;
-  X509_STORE *x509_store = NULL;
+  X509_STORE *x509_store;
 
-  x509_store = X509_STORE_new();
+  /* Operate on the ctx's own certificate store (like the macOS and Windows
+   * paths) so ares_tlsimp_set_cadata() additions land in the same store the
+   * verifier consults */
+  x509_store = SSL_CTX_get_cert_store(ctx);
   if (x509_store == NULL) {
-    return ARES_ENOMEM;
+    return ARES_ESERVFAIL;
   }
 
   for (i = 0; cadirs[i] != NULL; i++) {
     if (file_exists(cadirs[i], ARES_TRUE) &&
         X509_STORE_load_path(x509_store, cadirs[i]) == 1) {
-      goto done;
+      return ARES_SUCCESS;
     }
   }
 
@@ -225,20 +230,55 @@ static ares_status_t ares_ossl_load_caroots(SSL_CTX *ctx, OSSL_LIB_CTX *libctx)
     if (file_exists(cafile_paths[i], ARES_FALSE) &&
         X509_STORE_load_file_ex(x509_store, cafile_paths[i], libctx, NULL) ==
           1) {
-      goto done;
+      return ARES_SUCCESS;
     }
   }
 
-  X509_STORE_free(x509_store);
   return ARES_ENOTFOUND;
-
-done:
-  SSL_CTX_set1_verify_cert_store(ctx, x509_store);
-
-  X509_STORE_free(x509_store);
-  return ARES_SUCCESS;
 }
 #  endif
+
+ares_status_t ares_tlsimp_set_cadata(ares_cryptoimp_ctx_t *ctx,
+                                     const unsigned char *pem, size_t len)
+{
+  BIO        *bio;
+  X509_STORE *store;
+  size_t      count = 0;
+
+  if (ctx == NULL || pem == NULL || len == 0 || len > INT_MAX) {
+    return ARES_EFORMERR;
+  }
+
+  store = SSL_CTX_get_cert_store(ctx->sslctx);
+  if (store == NULL) {
+    return ARES_ESERVFAIL; /* LCOV_EXCL_LINE: DefensiveCoding */
+  }
+
+  bio = BIO_new_mem_buf(pem, (int)len);
+  if (bio == NULL) {
+    return ARES_ENOMEM; /* LCOV_EXCL_LINE: OutOfMemory */
+  }
+
+  while (1) {
+    X509 *x509 = PEM_read_bio_X509(bio, NULL, NULL, NULL);
+    if (x509 == NULL) {
+      /* End of data (or undecodable remainder); either way the PEM parser
+       * pushed an error we don't want lingering on the stack */
+      ERR_clear_error();
+      break;
+    }
+    if (X509_STORE_add_cert(store, x509)) {
+      count++;
+    }
+    X509_free(x509);
+  }
+  BIO_free(bio);
+
+  if (count == 0) {
+    return ARES_EBADSTR;
+  }
+  return ARES_SUCCESS;
+}
 
 void ares_cryptoimp_ctx_destroy(ares_cryptoimp_ctx_t *ctx)
 {
@@ -556,7 +596,8 @@ ares_conn_err_t ares_tlsimp_connect(ares_tls_t *tls)
     return ARES_CONN_ERR_INVALID;
   }
 
-  tls->state = ARES_TLS_STATE_CONNECT;
+  tls->state  = ARES_TLS_STATE_CONNECT;
+  tls->flags &= ~((unsigned int)(ARES_TLS_SF_READ | ARES_TLS_SF_WRITE));
 
   rv = SSL_connect(tls->ssl);
   if (rv == 0) {
@@ -573,7 +614,15 @@ ares_conn_err_t ares_tlsimp_connect(ares_tls_t *tls)
   }
 
   err = SSL_get_error(tls->ssl, rv);
-  if (err == SSL_ERROR_WANT_READ || err == SSL_ERROR_WANT_WRITE) {
+  /* Progressing the handshake requires the indicated socket direction no
+   * matter which logical operation the caller attempts next, so publish
+   * both read and write want-flags for ares_conn_interpret_events() */
+  if (err == SSL_ERROR_WANT_READ) {
+    tls->flags |= ARES_TLS_SF_READ_WANTREAD | ARES_TLS_SF_WRITE_WANTREAD;
+    return ARES_CONN_ERR_WOULDBLOCK;
+  }
+  if (err == SSL_ERROR_WANT_WRITE) {
+    tls->flags |= ARES_TLS_SF_READ_WANTWRITE | ARES_TLS_SF_WRITE_WANTWRITE;
     return ARES_CONN_ERR_WOULDBLOCK;
   }
 
@@ -594,7 +643,8 @@ ares_conn_err_t ares_tlsimp_shutdown(ares_tls_t *tls)
     return ARES_CONN_ERR_INVALID;
   }
 
-  tls->state = ARES_TLS_STATE_SHUTDOWN;
+  tls->state  = ARES_TLS_STATE_SHUTDOWN;
+  tls->flags &= ~((unsigned int)(ARES_TLS_SF_READ | ARES_TLS_SF_WRITE));
 
   rv = SSL_shutdown(tls->ssl);
   if (rv >= 0) {
@@ -603,7 +653,12 @@ ares_conn_err_t ares_tlsimp_shutdown(ares_tls_t *tls)
   }
 
   err = SSL_get_error(tls->ssl, rv);
-  if (err == SSL_ERROR_WANT_READ || err == SSL_ERROR_WANT_WRITE) {
+  if (err == SSL_ERROR_WANT_READ) {
+    tls->flags |= ARES_TLS_SF_READ_WANTREAD | ARES_TLS_SF_WRITE_WANTREAD;
+    return ARES_CONN_ERR_WOULDBLOCK;
+  }
+  if (err == SSL_ERROR_WANT_WRITE) {
+    tls->flags |= ARES_TLS_SF_READ_WANTWRITE | ARES_TLS_SF_WRITE_WANTWRITE;
     return ARES_CONN_ERR_WOULDBLOCK;
   }
 
@@ -631,7 +686,8 @@ ares_conn_err_t ares_tlsimp_earlydata_write(ares_tls_t          *tls,
     return ARES_CONN_ERR_TOOLARGE;
   }
 
-  tls->state = ARES_TLS_STATE_EARLYDATA;
+  tls->state  = ARES_TLS_STATE_EARLYDATA;
+  tls->flags &= ~((unsigned int)ARES_TLS_SF_WRITE);
 
   rv = SSL_write_early_data(tls->ssl, buf, *buf_len, buf_len);
   if (rv == 1) {
@@ -640,7 +696,12 @@ ares_conn_err_t ares_tlsimp_earlydata_write(ares_tls_t          *tls,
   }
 
   err = SSL_get_error(tls->ssl, rv);
-  if (err == SSL_ERROR_WANT_READ || err == SSL_ERROR_WANT_WRITE) {
+  if (err == SSL_ERROR_WANT_READ) {
+    tls->flags |= ARES_TLS_SF_WRITE_WANTREAD;
+    return ARES_CONN_ERR_WOULDBLOCK;
+  }
+  if (err == SSL_ERROR_WANT_WRITE) {
+    tls->flags |= ARES_TLS_SF_WRITE_WANTWRITE;
     return ARES_CONN_ERR_WOULDBLOCK;
   }
 

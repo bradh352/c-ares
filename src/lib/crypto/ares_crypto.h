@@ -78,6 +78,21 @@ typedef struct ares_tls ares_tls_t;
 ares_status_t ares_tls_create(ares_tls_t **tls, ares_crypto_ctx_t *crypto_ctx,
                               ares_conn_t *conn);
 
+/*! Add trusted CA certificate(s) in PEM form to the certificate
+ *  verification store, supplementing the system roots loaded at context
+ *  initialization.  Used for custom-CA configuration and by the test
+ *  suite.
+ *
+ *  \param[in] crypto_ctx Channel crypto context
+ *  \param[in] pem        PEM data containing one or more certificates
+ *  \param[in] len        Length of pem data in bytes
+ *  \return ARES_SUCCESS if at least one certificate was added,
+ *          ARES_EBADSTR if none could be parsed, ARES_ENOTIMP if built
+ *          without crypto support, otherwise an ares_status_t error
+ */
+ares_status_t ares_tls_set_cadata(ares_crypto_ctx_t   *crypto_ctx,
+                                  const unsigned char *pem, size_t len);
+
 ares_status_t ares_tls_session_insert(ares_crypto_ctx_t *crypto_ctx,
                                       ares_conn_t *conn, void *sess);
 ares_status_t ares_tls_session_remove(ares_crypto_ctx_t *crypto_ctx,
@@ -99,6 +114,8 @@ typedef struct ares_cryptoimp_ctx ares_cryptoimp_ctx_t;
 ares_status_t ares_cryptoimp_ctx_init(ares_cryptoimp_ctx_t **ctx,
                                       ares_crypto_ctx_t     *parent);
 void          ares_cryptoimp_ctx_destroy(ares_cryptoimp_ctx_t *ctx);
+ares_status_t ares_tlsimp_set_cadata(ares_cryptoimp_ctx_t *ctx,
+                                     const unsigned char *pem, size_t len);
 
 
 ares_status_t           ares_tlsimp_create(ares_tls_t          **tls,
