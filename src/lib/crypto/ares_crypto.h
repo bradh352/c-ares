@@ -124,6 +124,12 @@ ares_status_t           ares_tlsimp_create(ares_tls_t          **tls,
 ares_tls_state_t        ares_tlsimp_get_state(ares_tls_t *tls);
 ares_tls_stateflag_t    ares_tlsimp_get_stateflag(ares_tls_t *tls);
 size_t                  ares_tlsimp_get_earlydata_size(ares_tls_t *tls);
+
+/*! Whether the early data sent with ares_tlsimp_earlydata_write() was
+ *  accepted by the server.  Only meaningful once the connection has
+ *  reached the established state; on rejection the caller must re-send
+ *  the data through the normal write path. */
+ares_bool_t ares_tlsimp_earlydata_accepted(ares_tls_t *tls);
 void                    ares_tlsimp_destroy(ares_tls_t *tls);
 ares_conn_err_t         ares_tlsimp_earlydata_write(ares_tls_t          *tls,
                                                     const unsigned char *buf,

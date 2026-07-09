@@ -148,9 +148,20 @@ ares_status_t ares_tls_session_insert(ares_crypto_ctx_t *crypto_ctx,
 {
   char         *key    = ares_tls_session_key(conn);
   ares_status_t status = ARES_SUCCESS;
+  void         *old_sess;
 
   if (key == NULL || crypto_ctx == NULL || sess == NULL) {
+    ares_free(key);
     return ARES_EFORMERR;
+  }
+
+  /* Replacing an existing session for this key (e.g. a fresh ticket for
+   * the same server): the forward insert below releases the old session,
+   * so its reverse entry must go too or a later backend removal callback
+   * for the old session would tear down the new one's forward entry */
+  old_sess = ares_htable_strvp_get_direct(crypto_ctx->sess_fwd, key);
+  if (old_sess != NULL) {
+    ares_htable_vpstr_remove(crypto_ctx->sess_rev, old_sess);
   }
 
   if (!ares_htable_strvp_insert(crypto_ctx->sess_fwd, key, sess)) {

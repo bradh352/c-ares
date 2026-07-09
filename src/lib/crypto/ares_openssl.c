@@ -477,7 +477,12 @@ ares_status_t ares_cryptoimp_ctx_init(ares_cryptoimp_ctx_t **ctx,
   SSL_CTX_set_app_data((*ctx)->sslctx, *ctx);
   SSL_CTX_set_min_proto_version((*ctx)->sslctx, TLS1_2_VERSION);
   SSL_CTX_set_session_cache_mode((*ctx)->sslctx, SSL_SESS_CACHE_CLIENT);
-  SSL_CTX_set_security_level((*ctx)->sslctx, 3);
+  /* Security level 2 (112-bit minimum; no RC4, no compression).  Level 3
+   * would be preferable but it disables session tickets, which TLSv1.3
+   * session resumption -- and therefore 0-RTT early data -- is built on,
+   * and it rejects the RSA-2048 certificates still common on public
+   * resolvers */
+  SSL_CTX_set_security_level((*ctx)->sslctx, 2);
   SSL_CTX_set_mode((*ctx)->sslctx, SSL_MODE_ENABLE_PARTIAL_WRITE |
                                      SSL_MODE_ACCEPT_MOVING_WRITE_BUFFER |
                                      SSL_MODE_AUTO_RETRY);
@@ -554,8 +559,11 @@ ares_status_t ares_tlsimp_create(ares_tls_t          **tls,
       status = ARES_ESERVFAIL;
       goto done;
     }
-    /* TLS v1.3 recommends sessions only be used once */
-    SSL_CTX_remove_session(crypto_ctx->sslctx, sess);
+    /* TLS v1.3 recommends sessions only be used once: drop it from the
+     * c-ares cache so the next connection can't reuse it.  Deliberately
+     * NOT SSL_CTX_remove_session(): that also marks the session
+     * non-resumable, which would defeat the resumption just set up. */
+    ares_tls_session_remove(crypto_ctx->parent, sess);
   }
 
 done:
@@ -792,6 +800,16 @@ ares_conn_err_t ares_tlsimp_read(ares_tls_t *tls, unsigned char *buf,
     tls->last_io_error = ARES_CONN_ERR_CONNRESET;
   }
   return tls->last_io_error;
+}
+
+ares_bool_t ares_tlsimp_earlydata_accepted(ares_tls_t *tls)
+{
+  if (tls == NULL || tls->ssl == NULL) {
+    return ARES_FALSE;
+  }
+  return SSL_get_early_data_status(tls->ssl) == SSL_EARLY_DATA_ACCEPTED
+           ? ARES_TRUE
+           : ARES_FALSE;
 }
 
 size_t ares_tlsimp_get_earlydata_size(ares_tls_t *tls)

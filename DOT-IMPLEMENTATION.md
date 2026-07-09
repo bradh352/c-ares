@@ -123,9 +123,24 @@ deferred to its phase:
       before re-arming on fd events, or responses will sit unread.
 - [x] **[pre-harness]** Debug `fprintf(stderr, ...)` calls left in
       `ares_cryptoimp_ctx_init()`.
-- [ ] `SSL_CTX_set_security_level(3)` rejects RSA < 3072-bit server
-      certificates; several real-world resolvers still use RSA-2048.
-      Decide the level (2 is the likely sweet spot) and document it.
+- [x] `SSL_CTX_set_security_level(3)` — decided: **level 2**.  The harness
+      proved level 3 empirically unusable for this feature: OpenSSL
+      disables session tickets at level 3, which forecloses TLSv1.3
+      resumption and therefore 0-RTT early data entirely (it also rejects
+      the RSA-2048 certificates still common on public resolvers).
+- [x] `SSL_CTX_remove_session()` misuse (found by the resumption test):
+      it not only removes the session from the ctx cache, it marks the
+      session **non-resumable**, so the single-use implementation in
+      `ares_tlsimp_create()` was defeating the resumption it had just set
+      up (and early-data writes hard-failed).  Fixed: single-use is now
+      enforced by removing from the c-ares cache only.
+- [x] Stale reverse-table entry on ticket replacement (found by the
+      resumption test): inserting a second ticket under the same key
+      replaced the forward entry but left the old session's reverse entry;
+      a later backend removal callback for the old session (e.g. OpenSSL
+      evicting a session after an unclean close) would then tear down the
+      *new* session's forward entry.  Fixed in
+      `ares_tls_session_insert()`.
 - [ ] Windows: verify `CertOpenSystemStore(0, "ROOT")` compiles under
       `UNICODE` builds (should be `CertOpenSystemStoreA` or a `TEXT()`
       argument), and audit the const-cast on `pbCertEncoded`.
@@ -171,16 +186,21 @@ Prerequisites (beyond the **[pre-harness]** defect fixes above):
       Use ECDSA P-256 for generated test certs so the current security
       level 3 setting is satisfied regardless of how that decision lands.
 
-- [x] **Socketpair harness (gtest, `CARES_CRYPTO=ON` leg)** — landed in
-      `test/ares-test-tls.cc`; delivered coverage: handshake to
-      ESTABLISHED, want-flags (handshake-blocked, read-empty,
-      write-flooded), framed write/read round-trip, graceful shutdown,
-      certificate verification success + untrusted-CA failure, abrupt peer
-      close, and the `ares_conn_interpret_events()` matrix (remap both
+- [x] **Socketpair harness (gtest, `CARES_CRYPTO=ON` leg)** — complete, in
+      `test/ares-test-tls.cc` (10 tests): handshake to ESTABLISHED,
+      want-flags (handshake-blocked, read-empty, write-flooded), framed
+      write/read round-trip, graceful shutdown, certificate verification
+      success + untrusted-CA failure, abrupt peer close, mid-handshake
+      close, partial/repeated writes with byte-exact stream integrity,
+      session resumption (cache hit, single-use consumption, cache
+      repopulation from fresh tickets, `SSL_session_reused` confirmed
+      server-side), TLSv1.3 Early Data accepted (0-RTT payload observed
+      server-side pre-handshake-completion) and rejected (fresh server
+      ticket keys; replay through the normal write path arrives exactly
+      once), and the `ares_conn_interpret_events()` matrix (remap both
       directions, no-events entry, unknown-fd drop, non-TLS passthrough).
-      Original coverage-target list follows; still to add: mid-handshake
-      close, partial/repeated writes, session resumption, and Early Data
-      accept/reject (blocked on early-data plumbing design):
+      New provider API: `ares_tlsimp_earlydata_accepted()` for the
+      integration's requeue decision.  Original coverage-target list:
       client backend
       on one end of a `socketpair()` via the fake-conn fixture above, a
       plain OpenSSL *server* `SSL_CTX` driven directly by the test on the
@@ -367,7 +387,6 @@ already exists from Phase 1 Step 0; this phase covers the integrated stack.
 
 ## Open questions / decisions to make
 
-- OpenSSL security level (3 today — breaks RSA-2048 resolvers; 2?).
 - ALPN: send `dot` (registered ID)?  Required for DDR-discovered
   endpoints; harmless otherwise.  Probably yes, unconditionally.
 - Default when only `dns+tls://IP` given with no hostname: opportunistic
@@ -386,6 +405,16 @@ already exists from Phase 1 Step 0; this phase covers the integrated stack.
 - 2026-07-08: branch squashed onto current main (`513601c3`); this
   document added.  State: building blocks only, feature inert; defect list
   and phased plan recorded above.
+- 2026-07-09: Step 0 complete — remaining harness coverage landed
+  (mid-handshake close, partial writes with stream-integrity check,
+  session resumption, Early Data accept + reject/replay; 10/10 green,
+  normal + ASAN).  The resumption/0-RTT tests flushed out three more
+  defects, all fixed: security level 3 silently disables session tickets
+  (dropped to level 2 — decision now recorded above),
+  `SSL_CTX_remove_session()` marks sessions non-resumable (single-use now
+  enforced in the c-ares cache only), and ticket replacement left a stale
+  reverse-table entry that let OpenSSL's bad-session eviction tear down
+  the wrong cache entry.  Added `ares_tlsimp_earlydata_accepted()`.
 - 2026-07-08: test harness landed (`test/ares-test-tls.cc`): fake-conn
   socketpair fixture with runtime-generated ECDSA CA/server certs, plain
   OpenSSL server peer, five tests green under normal and ASAN crypto

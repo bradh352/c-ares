@@ -137,8 +137,9 @@ public:
   }
 
   /* trust_ca == false leaves the generated CA out of the client store, so
-   * certificate verification must fail */
-  bool Init(bool trust_ca)
+   * certificate verification must fail.  max_early > 0 makes the server
+   * advertise TLSv1.3 early data support in its session tickets. */
+  bool Init(bool trust_ca, unsigned int max_early = 0)
   {
     /* Runtime-generated ECDSA P-256 CA + server cert (P-256 satisfies the
      * backend's security level regardless of where that decision lands) */
@@ -210,15 +211,37 @@ public:
     conn_.tls = tls_;
 
     /* Plain OpenSSL server on the other end of the pair */
-    sctx_ = SSL_CTX_new(TLS_server_method());
+    sctx_ = MakeServerCtx(max_early);
     if (sctx_ == NULL) {
       return false;
     }
-    if (SSL_CTX_use_certificate(sctx_, srv_cert_) != 1 ||
-        SSL_CTX_use_PrivateKey(sctx_, srv_key_) != 1) {
-      return false;
+    return AttachServerSsl();
+  }
+
+  SSL_CTX *MakeServerCtx(unsigned int max_early)
+  {
+    SSL_CTX *ctx = SSL_CTX_new(TLS_server_method());
+    if (ctx == NULL) {
+      return NULL;
     }
-    SSL_CTX_set_min_proto_version(sctx_, TLS1_2_VERSION);
+    if (SSL_CTX_use_certificate(ctx, srv_cert_) != 1 ||
+        SSL_CTX_use_PrivateKey(ctx, srv_key_) != 1) {
+      SSL_CTX_free(ctx);
+      return NULL;
+    }
+    SSL_CTX_set_min_proto_version(ctx, TLS1_2_VERSION);
+    if (max_early > 0) {
+      SSL_CTX_set_max_early_data(ctx, max_early);
+      /* Deterministic 0-RTT acceptance: the client treats sessions as
+       * single-use so replay isn't possible from this harness, and the
+       * server's anti-replay would otherwise reject the first attempt */
+      SSL_CTX_set_options(ctx, SSL_OP_NO_ANTI_REPLAY);
+    }
+    return ctx;
+  }
+
+  bool AttachServerSsl(void)
+  {
     sssl_ = SSL_new(sctx_);
     if (sssl_ == NULL) {
       return false;
@@ -228,6 +251,58 @@ public:
     }
     SSL_set_accept_state(sssl_);
     return true;
+  }
+
+  /* Tear down the client TLS session, server SSL and socketpair -- keeping
+   * the channel, certificates and (optionally) the server ctx -- then
+   * create a fresh connection to exercise session resumption.  A fresh
+   * server ctx has new session-ticket keys, so a cached client session
+   * presented to it cannot resume (used to force early-data rejection). */
+  bool Reconnect(bool fresh_server_ctx, unsigned int max_early = 0)
+  {
+    if (tls_ != NULL) {
+      /* Close gracefully: an SSL freed without shutdown is treated as a
+       * bad connection by OpenSSL and its session is evicted from the
+       * cache, which would defeat the resumption this exercises */
+      if (ares_tlsimp_get_state(tls_) == ARES_TLS_STATE_ESTABLISHED) {
+        (void)ares_tlsimp_shutdown(tls_);
+      }
+      ares_tlsimp_destroy(tls_);
+      tls_      = nullptr;
+      conn_.tls = nullptr;
+    }
+    if (sssl_ != NULL) {
+      SSL_free(sssl_);
+      sssl_ = nullptr;
+    }
+    CloseFd(0);
+    CloseFd(1);
+    srv_done_ = false;
+    srv_fail_ = false;
+
+    if (fresh_server_ctx) {
+      SSL_CTX_free(sctx_);
+      sctx_ = MakeServerCtx(max_early);
+      if (sctx_ == NULL) {
+        return false;
+      }
+    }
+
+    if (socketpair(AF_UNIX, SOCK_STREAM, 0, sv_) != 0) {
+      return false;
+    }
+    if (fcntl(sv_[0], F_SETFL, O_NONBLOCK) != 0 ||
+        fcntl(sv_[1], F_SETFL, O_NONBLOCK) != 0) {
+      return false;
+    }
+    conn_.fd = sv_[0];
+
+    if (ares_tls_create(&tls_, channel_->crypto_ctx, &conn_) !=
+        ARES_SUCCESS) {
+      return false;
+    }
+    conn_.tls = tls_;
+    return AttachServerSsl();
   }
 
   /* Pump both ends until established or client-side failure.  Returns the
@@ -312,6 +387,67 @@ public:
       }
     }
     return err;
+  }
+
+  /* Read whatever is currently decryptable server-side, appending to out.
+   * Returns false on a hard error. */
+  bool DrainServer(std::string *out)
+  {
+    int i;
+    for (i = 0; i < 100; i++) {
+      unsigned char buf[4096];
+      size_t        rb = 0;
+      int           rv = SSL_read_ex(sssl_, buf, sizeof(buf), &rb);
+      if (rv == 1) {
+        out->append(reinterpret_cast<char *>(buf), rb);
+        continue;
+      }
+      int err = SSL_get_error(sssl_, rv);
+      return err == SSL_ERROR_WANT_READ || err == SSL_ERROR_WANT_WRITE;
+    }
+    return true;
+  }
+
+  /* Pump an early-data handshake: the client has already called
+   * ares_tlsimp_earlydata_write().  The server consumes the early-data
+   * phase with SSL_read_early_data() until FINISH while the client
+   * completes the handshake.  Early data the server actually accepted
+   * (none, when it rejects 0-RTT) is appended to early. */
+  ares_conn_err_t PumpEarlyHandshake(std::string *early)
+  {
+    bool finish = false;
+    int  i;
+
+    for (i = 0; i < 200; i++) {
+      if (ares_tlsimp_get_state(tls_) != ARES_TLS_STATE_ESTABLISHED) {
+        ares_conn_err_t cerr = ares_tlsimp_connect(tls_);
+        if (cerr != ARES_CONN_ERR_SUCCESS &&
+            cerr != ARES_CONN_ERR_WOULDBLOCK) {
+          return cerr;
+        }
+      }
+      if (!finish) {
+        unsigned char buf[512];
+        size_t        rb = 0;
+        int           rv = SSL_read_early_data(sssl_, buf, sizeof(buf), &rb);
+        if (rv == SSL_READ_EARLY_DATA_SUCCESS) {
+          early->append(reinterpret_cast<char *>(buf), rb);
+        } else if (rv == SSL_READ_EARLY_DATA_FINISH) {
+          finish    = true;
+          srv_done_ = true;
+        } else {
+          int err = SSL_get_error(sssl_, rv);
+          if (err != SSL_ERROR_WANT_READ && err != SSL_ERROR_WANT_WRITE) {
+            srv_fail_ = true;
+          }
+        }
+      }
+      if (finish &&
+          ares_tlsimp_get_state(tls_) == ARES_TLS_STATE_ESTABLISHED) {
+        return ARES_CONN_ERR_SUCCESS;
+      }
+    }
+    return ARES_CONN_ERR_CONNTIMEDOUT;
   }
 
   void CloseFd(int idx)
@@ -515,6 +651,179 @@ TEST_F(LibraryTest, CryptoTLSInterpretEvents) {
    * table is empty) */
   ares_htable_asvp_remove(h.channel_->connnode_by_socket, h.conn_.fd);
   ares_llist_destroy(l);
+}
+
+TEST_F(LibraryTest, CryptoTLSMidHandshakeClose) {
+  TLSHarness h;
+  ASSERT_TRUE(h.Init(true));
+
+  /* ClientHello is out, then the peer vanishes before replying: the
+   * handshake must surface a hard error, not spin */
+  EXPECT_EQ(ARES_CONN_ERR_WOULDBLOCK, ares_tlsimp_connect(h.tls_));
+  h.CloseFd(1);
+
+  ares_conn_err_t err = ARES_CONN_ERR_WOULDBLOCK;
+  for (int i = 0; i < 100 && err == ARES_CONN_ERR_WOULDBLOCK; i++) {
+    err = ares_tlsimp_connect(h.tls_);
+  }
+  EXPECT_NE(ARES_CONN_ERR_SUCCESS, err);
+  EXPECT_NE(ARES_CONN_ERR_WOULDBLOCK, err);
+  EXPECT_EQ(ARES_TLS_STATE_ERROR, ares_tlsimp_get_state(h.tls_));
+}
+
+TEST_F(LibraryTest, CryptoTLSPartialWrites) {
+  TLSHarness h;
+  ASSERT_TRUE(h.Init(true));
+  EXPECT_EQ(ARES_CONN_ERR_SUCCESS, h.PumpHandshake());
+
+  /* Send a large patterned stream with the server draining only when the
+   * client blocks: exercises WOULDBLOCK-and-retry and partial-write
+   * accounting.  Every byte reported written must arrive exactly once, in
+   * order. */
+  std::string   received;
+  size_t        total_sent = 0;
+  unsigned char chunk[4096];
+  bool          blocked = false;
+
+  for (int c = 0; c < 64; c++) {
+    size_t j;
+    size_t off = 0;
+    int    guard;
+
+    for (j = 0; j < sizeof(chunk); j++) {
+      chunk[j] = (unsigned char)((total_sent + j) & 0xFF);
+    }
+    for (guard = 0; guard < 1000 && off < sizeof(chunk); guard++) {
+      size_t          wl  = sizeof(chunk) - off;
+      ares_conn_err_t err = ares_tlsimp_write(h.tls_, chunk + off, &wl);
+      if (err == ARES_CONN_ERR_SUCCESS) {
+        off        += wl;
+        total_sent += wl;
+        continue;
+      }
+      ASSERT_EQ(ARES_CONN_ERR_WOULDBLOCK, err);
+      blocked = true;
+      ASSERT_TRUE(h.DrainServer(&received));
+    }
+    ASSERT_EQ(sizeof(chunk), off);
+  }
+  EXPECT_TRUE(blocked);
+
+  for (int guard = 0; guard < 1000 && received.size() < total_sent;
+       guard++) {
+    ASSERT_TRUE(h.DrainServer(&received));
+  }
+  ASSERT_EQ(total_sent, received.size());
+  for (size_t i = 0; i < received.size(); i++) {
+    ASSERT_EQ((char)(i & 0xFF), received[i]) << "corruption at offset " << i;
+  }
+}
+
+TEST_F(LibraryTest, CryptoTLSSessionResumption) {
+  TLSHarness h;
+  ASSERT_TRUE(h.Init(true));
+  EXPECT_EQ(ARES_CONN_ERR_SUCCESS, h.PumpHandshake());
+
+  /* TLSv1.3 tickets arrive post-handshake; a read processes them and the
+   * new-session callback populates the cache */
+  unsigned char m[] = { 't' };
+  ASSERT_TRUE(h.ServerWrite(m, sizeof(m)));
+  unsigned char rbuf[16];
+  size_t        rlen = sizeof(rbuf);
+  EXPECT_EQ(ARES_CONN_ERR_SUCCESS, h.ClientRead(rbuf, &rlen));
+  ASSERT_NE(nullptr, ares_tls_session_get(h.channel_->crypto_ctx, &h.conn_));
+
+  /* A second connection to the same server consumes the cached session
+   * (single-use, per TLSv1.3 guidance) and resumes */
+  ASSERT_TRUE(h.Reconnect(false));
+  EXPECT_EQ(nullptr, ares_tls_session_get(h.channel_->crypto_ctx, &h.conn_));
+  EXPECT_EQ(ARES_CONN_ERR_SUCCESS, h.PumpHandshake());
+  EXPECT_EQ(1, SSL_session_reused(h.sssl_));
+
+  /* The resumed handshake delivers fresh tickets: the cache repopulates */
+  ASSERT_TRUE(h.ServerWrite(m, sizeof(m)));
+  rlen = sizeof(rbuf);
+  EXPECT_EQ(ARES_CONN_ERR_SUCCESS, h.ClientRead(rbuf, &rlen));
+  EXPECT_NE(nullptr, ares_tls_session_get(h.channel_->crypto_ctx, &h.conn_));
+}
+
+TEST_F(LibraryTest, CryptoTLSEarlyDataAccept) {
+  TLSHarness h;
+  ASSERT_TRUE(h.Init(true, 16384));
+
+  /* No session yet: no early-data budget, writes are refused up front */
+  EXPECT_EQ((size_t)0, ares_tlsimp_get_earlydata_size(h.tls_));
+  unsigned char q[] = { 0x00, 0x03, 'e', 'd', '!' };
+  size_t        ql  = sizeof(q);
+  EXPECT_EQ(ARES_CONN_ERR_TOOLARGE,
+            ares_tlsimp_earlydata_write(h.tls_, q, &ql));
+
+  /* Handshake and cache a session advertising early data */
+  EXPECT_EQ(ARES_CONN_ERR_SUCCESS, h.PumpHandshake());
+  unsigned char m[] = { 't' };
+  ASSERT_TRUE(h.ServerWrite(m, sizeof(m)));
+  unsigned char rbuf[16];
+  size_t        rlen = sizeof(rbuf);
+  EXPECT_EQ(ARES_CONN_ERR_SUCCESS, h.ClientRead(rbuf, &rlen));
+  ASSERT_NE(nullptr, ares_tls_session_get(h.channel_->crypto_ctx, &h.conn_));
+
+  /* Reconnect: the resumed session carries the early-data budget and the
+   * first flight carries the payload */
+  ASSERT_TRUE(h.Reconnect(false));
+  EXPECT_EQ((size_t)16384, ares_tlsimp_get_earlydata_size(h.tls_));
+  ql = sizeof(q);
+  EXPECT_EQ(ARES_CONN_ERR_SUCCESS,
+            ares_tlsimp_earlydata_write(h.tls_, q, &ql));
+  EXPECT_EQ(sizeof(q), ql);
+
+  std::string early;
+  EXPECT_EQ(ARES_CONN_ERR_SUCCESS, h.PumpEarlyHandshake(&early));
+  EXPECT_EQ(ARES_TRUE, ares_tlsimp_earlydata_accepted(h.tls_));
+  ASSERT_EQ(sizeof(q), early.size());
+  EXPECT_EQ(0, memcmp(q, early.data(), early.size()));
+
+  /* Connection is fully usable afterwards */
+  unsigned char resp[] = { 'o', 'k' };
+  ASSERT_TRUE(h.ServerWrite(resp, sizeof(resp)));
+  rlen = sizeof(rbuf);
+  EXPECT_EQ(ARES_CONN_ERR_SUCCESS, h.ClientRead(rbuf, &rlen));
+  ASSERT_EQ(sizeof(resp), rlen);
+  EXPECT_EQ(0, memcmp(resp, rbuf, rlen));
+}
+
+TEST_F(LibraryTest, CryptoTLSEarlyDataReject) {
+  TLSHarness h;
+  ASSERT_TRUE(h.Init(true, 16384));
+  EXPECT_EQ(ARES_CONN_ERR_SUCCESS, h.PumpHandshake());
+  unsigned char m[] = { 't' };
+  ASSERT_TRUE(h.ServerWrite(m, sizeof(m)));
+  unsigned char rbuf[16];
+  size_t        rlen = sizeof(rbuf);
+  EXPECT_EQ(ARES_CONN_ERR_SUCCESS, h.ClientRead(rbuf, &rlen));
+  ASSERT_NE(nullptr, ares_tls_session_get(h.channel_->crypto_ctx, &h.conn_));
+
+  /* Fresh server ctx: new ticket keys, so the client's cached session
+   * cannot resume and its 0-RTT flight must be rejected */
+  ASSERT_TRUE(h.Reconnect(true, 16384));
+  unsigned char q[] = { 0x00, 0x03, 'e', 'd', '!' };
+  size_t        ql  = sizeof(q);
+  EXPECT_EQ(ARES_CONN_ERR_SUCCESS,
+            ares_tlsimp_earlydata_write(h.tls_, q, &ql));
+
+  std::string early;
+  EXPECT_EQ(ARES_CONN_ERR_SUCCESS, h.PumpEarlyHandshake(&early));
+  EXPECT_EQ(ARES_FALSE, ares_tlsimp_earlydata_accepted(h.tls_));
+  EXPECT_EQ((size_t)0, early.size());
+
+  /* The rejected flight is the caller's to replay through the normal
+   * write path; it must arrive exactly once */
+  ql = sizeof(q);
+  EXPECT_EQ(ARES_CONN_ERR_SUCCESS, ares_tlsimp_write(h.tls_, q, &ql));
+  unsigned char sbuf[64];
+  size_t        sread = 0;
+  ASSERT_TRUE(h.ServerRead(sbuf, sizeof(sbuf), &sread));
+  ASSERT_EQ(sizeof(q), sread);
+  EXPECT_EQ(0, memcmp(q, sbuf, sread));
 }
 
 #endif /* CARES_TEST_TLS_HARNESS */
