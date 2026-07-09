@@ -1443,6 +1443,11 @@ static ares_status_t ares_send_query_int(ares_server_t        *requested_server,
     return ARES_ENOSERVER;
   }
 
+  /* DNS-over-TLS servers only speak TLS over TCP */
+  if (server->use_tls) {
+    query->using_tcp = ARES_TRUE;
+  }
+
   /* If a query is directed to a specific server, or the query is being
    * retried, don't probe for downed servers.  Note that the chosen server
    * having failures itself does NOT disable probing: when every server has

@@ -50,12 +50,65 @@ extern "C" {
 #  include <openssl/x509v3.h>
 #  include <openssl/evp.h>
 #  include <sys/socket.h>
+#  include <netinet/in.h>
 #  include <fcntl.h>
 #  include <unistd.h>
+#  include <thread>
+#  include <atomic>
+#  include <vector>
 #endif
 
 namespace ares {
 namespace test {
+
+/* dns+tls:// server configuration, public API only (all platforms) */
+TEST_F(LibraryTest, TLSServerConfigCSV)
+{
+  ares_channel_t *channel = nullptr;
+  EXPECT_EQ(ARES_SUCCESS, ares_init(&channel));
+
+#ifdef CARES_USE_CRYPTO
+  EXPECT_EQ(ARES_SUCCESS,
+            ares_set_servers_csv(
+              channel, "dns+tls://1.2.3.4?hostname=one.example&verify=strict"
+                       ",dns://5.6.7.8"));
+
+  char *csv1 = ares_get_servers_csv(channel);
+  ASSERT_NE(nullptr, csv1);
+  EXPECT_NE(nullptr, strstr(csv1, "dns+tls://1.2.3.4"));
+  EXPECT_NE(nullptr, strstr(csv1, "hostname=one.example"));
+  EXPECT_NE(nullptr, strstr(csv1, "verify=strict"));
+  EXPECT_NE(nullptr, strstr(csv1, "5.6.7.8"));
+
+  /* Emitted form re-parses to the identical canonical form */
+  EXPECT_EQ(ARES_SUCCESS, ares_set_servers_csv(channel, csv1));
+  char *csv2 = ares_get_servers_csv(channel);
+  ASSERT_NE(nullptr, csv2);
+  EXPECT_STREQ(csv1, csv2);
+  ares_free_string(csv1);
+  ares_free_string(csv2);
+
+  /* Same ip:port with different TLS identity is a distinct server */
+  EXPECT_EQ(ARES_SUCCESS,
+            ares_set_servers_csv(channel,
+                                 "dns+tls://1.2.3.4?hostname=one.example"
+                                 ",dns+tls://1.2.3.4?hostname=two.example"));
+  char *csv3 = ares_get_servers_csv(channel);
+  ASSERT_NE(nullptr, csv3);
+  EXPECT_NE(nullptr, strstr(csv3, "one.example"));
+  EXPECT_NE(nullptr, strstr(csv3, "two.example"));
+  ares_free_string(csv3);
+
+  /* Bad verify mode is rejected */
+  EXPECT_NE(ARES_SUCCESS,
+            ares_set_servers_csv(channel, "dns+tls://1.2.3.4?verify=bogus"));
+#else
+  /* Without crypto support, TLS server configuration is rejected up front */
+  EXPECT_NE(ARES_SUCCESS, ares_set_servers_csv(channel, "dns+tls://1.2.3.4"));
+#endif
+
+  ares_destroy(channel);
+}
 
 #ifdef CARES_TEST_TLS_HARNESS
 
@@ -196,6 +249,10 @@ public:
     server_.addr.addr.addr4.s_addr = htonl(0x7f000001); /* 127.0.0.1 */
     server_.udp_port               = 853;
     server_.tcp_port               = 853;
+    server_.use_tls                = ARES_TRUE;
+    /* No authentication name (the test cert carries no SAN): strict here
+     * means chain-only verification against the injected CA */
+    server_.tls_verify = ARES_TLS_VERIFY_STRICT;
 
     memset(&conn_, 0, sizeof(conn_));
     conn_.server = &server_;
@@ -879,6 +936,305 @@ TEST_F(LibraryTest, CryptoTLSReadPending) {
   EXPECT_EQ(ARES_FALSE, ares_tlsimp_get_read_pending(h.tls_));
   rlen = sizeof(rbuf);
   EXPECT_EQ(ARES_CONN_ERR_WOULDBLOCK, ares_tlsimp_read(h.tls_, rbuf, &rlen));
+}
+
+/* Minimal threaded DoT server: accepts TLS connections on a loopback
+ * listener and answers each TCP-framed A query with 1.2.3.4, echoing the
+ * request id and question. */
+class DoTTestServer {
+public:
+  DoTTestServer() = default;
+
+  ~DoTTestServer()
+  {
+    Stop();
+    if (sctx_ != NULL) {
+      SSL_CTX_free(sctx_);
+    }
+  }
+
+  bool Start(X509 *cert, EVP_PKEY *key)
+  {
+    struct sockaddr_in sin;
+    socklen_t          slen = sizeof(sin);
+
+    sctx_ = SSL_CTX_new(TLS_server_method());
+    if (sctx_ == NULL) {
+      return false;
+    }
+    if (SSL_CTX_use_certificate(sctx_, cert) != 1 ||
+        SSL_CTX_use_PrivateKey(sctx_, key) != 1) {
+      return false;
+    }
+    SSL_CTX_set_min_proto_version(sctx_, TLS1_2_VERSION);
+
+    lfd_ = socket(AF_INET, SOCK_STREAM, 0);
+    if (lfd_ < 0) {
+      return false;
+    }
+    memset(&sin, 0, sizeof(sin));
+    sin.sin_family      = AF_INET;
+    sin.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
+    if (bind(lfd_, (struct sockaddr *)&sin, sizeof(sin)) != 0 ||
+        listen(lfd_, 2) != 0 ||
+        getsockname(lfd_, (struct sockaddr *)&sin, &slen) != 0) {
+      return false;
+    }
+    port_ = ntohs(sin.sin_port);
+
+    thr_ = std::thread(&DoTTestServer::Run, this);
+    return true;
+  }
+
+  void Stop()
+  {
+    if (lfd_ != -1) {
+      shutdown(lfd_, SHUT_RDWR);
+      close(lfd_);
+      lfd_ = -1;
+    }
+    if (thr_.joinable()) {
+      thr_.join();
+    }
+  }
+
+  unsigned short   port_ = 0;
+  std::atomic<int> queries_{ 0 };
+  std::atomic<int> accepts_{ 0 };
+
+private:
+  bool ReadFull(SSL *ssl, unsigned char *buf, size_t len)
+  {
+    size_t off = 0;
+    while (off < len) {
+      size_t rb = 0;
+      if (SSL_read_ex(ssl, buf + off, len - off, &rb) != 1) {
+        return false;
+      }
+      off += rb;
+    }
+    return true;
+  }
+
+  bool WriteFull(SSL *ssl, const unsigned char *buf, size_t len)
+  {
+    size_t off = 0;
+    while (off < len) {
+      size_t wb = 0;
+      if (SSL_write_ex(ssl, buf + off, len - off, &wb) != 1) {
+        return false;
+      }
+      off += wb;
+    }
+    return true;
+  }
+
+  bool AnswerQuery(SSL *ssl, const unsigned char *q, size_t qlen)
+  {
+    ares_dns_record_t  *req  = NULL;
+    ares_dns_record_t  *resp = NULL;
+    const char         *name = NULL;
+    ares_dns_rec_type_t qtype;
+    ares_dns_class_t    qclass;
+    ares_dns_rr_t      *rr   = NULL;
+    unsigned char      *abuf = NULL;
+    size_t              alen = 0;
+    unsigned char       frame[2];
+    bool                ok = false;
+    struct ares_addr    addr;
+
+    if (ares_dns_parse(q, qlen, 0, &req) != ARES_SUCCESS) {
+      return false;
+    }
+    if (ares_dns_record_query_get(req, 0, &name, &qtype, &qclass) !=
+          ARES_SUCCESS ||
+        ares_dns_record_create(&resp, ares_dns_record_get_id(req),
+                               ARES_FLAG_QR | ARES_FLAG_RA, ARES_OPCODE_QUERY,
+                               ARES_RCODE_NOERROR) != ARES_SUCCESS) {
+      goto done;
+    }
+    if (ares_dns_record_query_add(resp, name, qtype, qclass) != ARES_SUCCESS) {
+      goto done;
+    }
+
+    memset(&addr, 0, sizeof(addr));
+    addr.family            = AF_INET;
+    addr.addr.addr4.s_addr = htonl(0x01020304); /* 1.2.3.4 */
+    if (ares_dns_record_rr_add(&rr, resp, ARES_SECTION_ANSWER, name,
+                               ARES_REC_TYPE_A, ARES_CLASS_IN,
+                               60) != ARES_SUCCESS ||
+        ares_dns_rr_set_addr(rr, ARES_RR_A_ADDR, &addr.addr.addr4) !=
+          ARES_SUCCESS) {
+      goto done;
+    }
+
+    if (ares_dns_write(resp, &abuf, &alen) != ARES_SUCCESS) {
+      goto done;
+    }
+
+    frame[0] = (unsigned char)((alen >> 8) & 0xFF);
+    frame[1] = (unsigned char)(alen & 0xFF);
+    ok       = WriteFull(ssl, frame, 2) && WriteFull(ssl, abuf, alen);
+    if (ok) {
+      queries_++;
+    }
+
+done:
+    ares_free_string(abuf);
+    ares_dns_record_destroy(resp);
+    ares_dns_record_destroy(req);
+    return ok;
+  }
+
+  void Run()
+  {
+    for (;;) {
+      int cfd = accept(lfd_, NULL, NULL);
+      if (cfd < 0) {
+        break;
+      }
+      accepts_++;
+
+      SSL *ssl = SSL_new(sctx_);
+      if (ssl != NULL && SSL_set_fd(ssl, cfd) == 1 && SSL_accept(ssl) == 1) {
+        for (;;) {
+          unsigned char              lenb[2];
+          unsigned short             mlen;
+          std::vector<unsigned char> q;
+
+          if (!ReadFull(ssl, lenb, 2)) {
+            break;
+          }
+          mlen = (unsigned short)((lenb[0] << 8) | lenb[1]);
+          q.resize(mlen);
+          if (!ReadFull(ssl, q.data(), mlen)) {
+            break;
+          }
+          if (!AnswerQuery(ssl, q.data(), q.size())) {
+            break;
+          }
+        }
+      }
+      if (ssl != NULL) {
+        SSL_shutdown(ssl);
+        SSL_free(ssl);
+      }
+      close(cfd);
+    }
+  }
+
+  SSL_CTX    *sctx_ = nullptr;
+  int         lfd_  = -1;
+  std::thread thr_;
+};
+
+/* End-to-end: a real channel configured via dns+tls:// completes real
+ * queries against a live TLS server, reusing the connection */
+TEST_F(LibraryTest, CryptoDoTQuery)
+{
+  /* Certs (reuse the harness generator) */
+  EVP_PKEY *ca_key  = EVP_EC_gen("P-256");
+  EVP_PKEY *srv_key = EVP_EC_gen("P-256");
+  ASSERT_NE(nullptr, ca_key);
+  ASSERT_NE(nullptr, srv_key);
+  X509 *ca_cert = TlsTestMkCert(ca_key, ca_key, NULL, 1, true);
+  ASSERT_NE(nullptr, ca_cert);
+  X509 *srv_cert = TlsTestMkCert(srv_key, ca_key, ca_cert, 2, false);
+  ASSERT_NE(nullptr, srv_cert);
+
+  DoTTestServer srv;
+  ASSERT_TRUE(srv.Start(srv_cert, srv_key));
+
+  ares_channel_t     *channel = nullptr;
+  struct ares_options opts;
+  memset(&opts, 0, sizeof(opts));
+  /* STAYOPEN keeps the idle connection between sequential queries so reuse
+   * can be asserted */
+  opts.flags = ARES_FLAG_EDNS | ARES_FLAG_STAYOPEN;
+  EXPECT_EQ(ARES_SUCCESS, ares_init_options(&channel, &opts, ARES_OPT_FLAGS));
+
+  /* Trust the test CA */
+  {
+    BIO  *bio = BIO_new(BIO_s_mem());
+    char *pem = NULL;
+    long  len;
+    ASSERT_NE(nullptr, bio);
+    ASSERT_EQ(1, PEM_write_bio_X509(bio, ca_cert));
+    len = BIO_get_mem_data(bio, &pem);
+    ASSERT_EQ(ARES_SUCCESS,
+              ares_tls_set_cadata(channel->crypto_ctx,
+                                  (const unsigned char *)pem, (size_t)len));
+    BIO_free(bio);
+  }
+
+  char csv[128];
+  snprintf(csv, sizeof(csv), "dns+tls://127.0.0.1:%u?verify=strict",
+           (unsigned int)srv.port_);
+  EXPECT_EQ(ARES_SUCCESS, ares_set_servers_csv(channel, csv));
+
+  HostResult result1;
+  ares_gethostbyname(channel, "dot.test", AF_INET, HostCallback, &result1);
+  ProcessWork(channel, NoExtraFDs, nullptr);
+  EXPECT_TRUE(result1.done_);
+  EXPECT_EQ(ARES_SUCCESS, result1.status_);
+  ASSERT_EQ((size_t)1, result1.host_.addrs_.size());
+  EXPECT_EQ("1.2.3.4", result1.host_.addrs_[0]);
+
+  /* Second query rides the same connection: no new accept */
+  HostResult result2;
+  ares_gethostbyname(channel, "again.test", AF_INET, HostCallback, &result2);
+  ProcessWork(channel, NoExtraFDs, nullptr);
+  EXPECT_TRUE(result2.done_);
+  EXPECT_EQ(ARES_SUCCESS, result2.status_);
+
+  EXPECT_EQ(2, srv.queries_.load());
+  EXPECT_EQ(1, srv.accepts_.load());
+
+  ares_destroy(channel);
+  srv.Stop();
+  X509_free(srv_cert);
+  X509_free(ca_cert);
+  EVP_PKEY_free(srv_key);
+  EVP_PKEY_free(ca_key);
+}
+
+/* Strict verification against an untrusted CA must fail the query, not
+ * fall back to plaintext or hang */
+TEST_F(LibraryTest, CryptoDoTVerifyFail)
+{
+  EVP_PKEY *ca_key  = EVP_EC_gen("P-256");
+  EVP_PKEY *srv_key = EVP_EC_gen("P-256");
+  ASSERT_NE(nullptr, ca_key);
+  ASSERT_NE(nullptr, srv_key);
+  X509 *ca_cert = TlsTestMkCert(ca_key, ca_key, NULL, 1, true);
+  ASSERT_NE(nullptr, ca_cert);
+  X509 *srv_cert = TlsTestMkCert(srv_key, ca_key, ca_cert, 2, false);
+  ASSERT_NE(nullptr, srv_cert);
+
+  DoTTestServer srv;
+  ASSERT_TRUE(srv.Start(srv_cert, srv_key));
+
+  ares_channel_t *channel = nullptr;
+  EXPECT_EQ(ARES_SUCCESS, ares_init(&channel));
+
+  char csv[128];
+  snprintf(csv, sizeof(csv), "dns+tls://127.0.0.1:%u?verify=strict",
+           (unsigned int)srv.port_);
+  EXPECT_EQ(ARES_SUCCESS, ares_set_servers_csv(channel, csv));
+
+  HostResult result;
+  ares_gethostbyname(channel, "dot.test", AF_INET, HostCallback, &result);
+  ProcessWork(channel, NoExtraFDs, nullptr);
+  EXPECT_TRUE(result.done_);
+  EXPECT_NE(ARES_SUCCESS, result.status_);
+  EXPECT_EQ(0, srv.queries_.load());
+
+  ares_destroy(channel);
+  srv.Stop();
+  X509_free(srv_cert);
+  X509_free(ca_cert);
+  EVP_PKEY_free(srv_key);
+  EVP_PKEY_free(ca_key);
 }
 
 #endif /* CARES_TEST_TLS_HARNESS */

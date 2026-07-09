@@ -309,7 +309,7 @@ static int ares_ossl_bio_read_ex(BIO *b, char *buf, size_t len,
 
   *readbytes = 0;
 
-  tls->last_io_error = ares_conn_read(tls->conn, buf, len, readbytes);
+  tls->last_io_error = ares_conn_read_raw(tls->conn, buf, len, readbytes);
   if (tls->last_io_error == ARES_CONN_ERR_SUCCESS) {
     return 1;
   }
@@ -329,7 +329,7 @@ static int ares_ossl_bio_write_ex(BIO *b, const char *buf, size_t len,
 
   *written = 0;
 
-  tls->last_io_error = ares_conn_write(tls->conn, buf, len, written);
+  tls->last_io_error = ares_conn_write_raw(tls->conn, buf, len, written);
   if (tls->last_io_error == ARES_CONN_ERR_SUCCESS) {
     return 1;
   }
@@ -476,7 +476,6 @@ ares_status_t ares_cryptoimp_ctx_init(ares_cryptoimp_ctx_t **ctx,
    * ARES_CONN_ERR_SECURITY instead. */
   (void)ares_ossl_load_caroots((*ctx)->sslctx, (*ctx)->ctx);
 
-  SSL_CTX_set_read_ahead((*ctx)->sslctx, 1);
   SSL_CTX_set_app_data((*ctx)->sslctx, *ctx);
   SSL_CTX_set_min_proto_version((*ctx)->sslctx, TLS1_2_VERSION);
   SSL_CTX_set_session_cache_mode((*ctx)->sslctx, SSL_SESS_CACHE_CLIENT);
@@ -549,9 +548,31 @@ ares_status_t ares_tlsimp_create(ares_tls_t          **tls,
   /* SSL object owns the bio (both directions) from here on */
   SSL_set_bio(state->ssl, bio, bio);
 
-  /* Peer hostname verification (SSL_set1_host()) and SNI
-   * (SSL_set_tlsext_host_name()) are wired in once server-level TLS
-   * configuration provides an authentication name */
+  /* SNI and peer hostname verification from the server's authentication
+   * name, when configured */
+  if (ares_strlen(conn->server->tls_hostname) > 0) {
+    if (SSL_set_tlsext_host_name(state->ssl, conn->server->tls_hostname) != 1 ||
+        SSL_set1_host(state->ssl, conn->server->tls_hostname) != 1) {
+      status = ARES_ESERVFAIL;
+      goto done;
+    }
+  }
+
+  /* Verification mode.  Default resolves to strict when an authentication
+   * name is configured, opportunistic (encrypt-only) otherwise, per
+   * RFC 8310.  Strict without a name verifies the chain only. */
+  {
+    ares_tls_verify_t verify = conn->server->tls_verify;
+    if (verify == ARES_TLS_VERIFY_DEFAULT) {
+      verify = ares_strlen(conn->server->tls_hostname) > 0
+                 ? ARES_TLS_VERIFY_STRICT
+                 : ARES_TLS_VERIFY_OPPORTUNISTIC;
+    }
+    if (verify == ARES_TLS_VERIFY_OPPORTUNISTIC) {
+      SSL_set_verify(state->ssl, SSL_VERIFY_NONE, NULL);
+    }
+  }
+
 
   /* Session handling */
   sess = ares_tls_session_get(crypto_ctx->parent, conn);

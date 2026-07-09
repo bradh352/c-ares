@@ -42,8 +42,8 @@ void ares_conn_sock_state_cb_update(ares_conn_t            *conn,
   conn->state_flags |= flags;
 }
 
-ares_conn_err_t ares_conn_read(ares_conn_t *conn, void *data, size_t len,
-                               size_t *read_bytes)
+ares_conn_err_t ares_conn_read_raw(ares_conn_t *conn, void *data, size_t len,
+                                   size_t *read_bytes)
 {
   ares_channel_t *channel = conn->server->channel;
   ares_conn_err_t err;
@@ -169,8 +169,8 @@ static ares_status_t ares_conn_set_self_ip(ares_conn_t *conn, ares_bool_t early)
   return ARES_SUCCESS;
 }
 
-ares_conn_err_t ares_conn_write(ares_conn_t *conn, const void *data, size_t len,
-                                size_t *written)
+ares_conn_err_t ares_conn_write_raw(ares_conn_t *conn, const void *data,
+                                    size_t len, size_t *written)
 {
   ares_channel_t         *channel = conn->server->channel;
   ares_bool_t             is_tfo  = ARES_FALSE;
@@ -228,6 +228,74 @@ done:
                                            ARES_CONN_STATE_WRITE);
   }
 
+  return err;
+}
+
+/*! Drive the TLS handshake as needed; ARES_CONN_ERR_SUCCESS means the
+ *  session is established and application I/O may proceed */
+static ares_conn_err_t ares_conn_tls_pump(ares_conn_t *conn)
+{
+  switch (ares_tlsimp_get_state(conn->tls)) {
+    case ARES_TLS_STATE_INIT:
+    case ARES_TLS_STATE_EARLYDATA:
+    case ARES_TLS_STATE_CONNECT:
+      return ares_tlsimp_connect(conn->tls);
+    case ARES_TLS_STATE_ESTABLISHED:
+      return ARES_CONN_ERR_SUCCESS;
+    case ARES_TLS_STATE_SHUTDOWN:
+    case ARES_TLS_STATE_DISCONNECTED:
+      return ARES_CONN_ERR_CONNCLOSED;
+    case ARES_TLS_STATE_ERROR:
+    default:
+      return ARES_CONN_ERR_CONNRESET;
+  }
+}
+
+ares_conn_err_t ares_conn_read(ares_conn_t *conn, void *data, size_t len,
+                               size_t *read_bytes)
+{
+  ares_conn_err_t err;
+
+  if (!(conn->flags & ARES_CONN_FLAG_TLS)) {
+    return ares_conn_read_raw(conn, data, len, read_bytes);
+  }
+
+  err = ares_conn_tls_pump(conn);
+  if (err != ARES_CONN_ERR_SUCCESS) {
+    return err;
+  }
+
+  *read_bytes = len;
+  err         = ares_tlsimp_read(conn->tls, data, read_bytes);
+  if (err != ARES_CONN_ERR_SUCCESS) {
+    *read_bytes = 0;
+    return err;
+  }
+  conn->state_flags |= ARES_CONN_STATE_CONNECTED;
+  return err;
+}
+
+ares_conn_err_t ares_conn_write(ares_conn_t *conn, const void *data, size_t len,
+                                size_t *written)
+{
+  ares_conn_err_t err;
+
+  if (!(conn->flags & ARES_CONN_FLAG_TLS)) {
+    return ares_conn_write_raw(conn, data, len, written);
+  }
+
+  *written = 0;
+
+  err = ares_conn_tls_pump(conn);
+  if (err != ARES_CONN_ERR_SUCCESS) {
+    return err;
+  }
+
+  *written = len;
+  err      = ares_tlsimp_write(conn->tls, data, written);
+  if (err != ARES_CONN_ERR_SUCCESS) {
+    *written = 0;
+  }
   return err;
 }
 
@@ -373,9 +441,26 @@ ares_status_t ares_open_connection(ares_conn_t   **conn_out,
     /* LCOV_EXCL_STOP */
   }
 
+  if (server->use_tls) {
+    if (!is_tcp) {
+      /* DoT is TLS over TCP; UDP connections must never be requested for a
+       * TLS server */
+      status = ARES_EFORMERR; /* LCOV_EXCL_LINE: DefensiveCoding */
+      goto done;              /* LCOV_EXCL_LINE: DefensiveCoding */
+    }
+    conn->flags |= ARES_CONN_FLAG_TLS;
+    status       = ares_tls_create(&conn->tls, channel->crypto_ctx, conn);
+    if (status != ARES_SUCCESS) {
+      /* ARES_ENOTIMP when built without crypto support */
+      goto done;
+    }
+  }
+
   /* Try to enable TFO always if using TCP. it will fail later on if its
-   * really not supported when we try to enable it on the socket. */
-  if (conn->flags & ARES_CONN_FLAG_TCP) {
+   * really not supported when we try to enable it on the socket.
+   * TLS connections don't use TFO yet: composing it with the handshake
+   * (and eventually 0-RTT early data) is future work. */
+  if (conn->flags & ARES_CONN_FLAG_TCP && !(conn->flags & ARES_CONN_FLAG_TLS)) {
     conn->flags |= ARES_CONN_FLAG_TFO;
   }
 
@@ -488,6 +573,7 @@ done:
   if (status != ARES_SUCCESS) {
     ares_llist_node_claim(node);
     ares_llist_destroy(conn->queries_to_conn);
+    ares_tlsimp_destroy(conn->tls);
     ares_socket_close(channel, conn->fd);
     ares_buf_destroy(conn->out_buf);
     ares_buf_destroy(conn->in_buf);
@@ -560,9 +646,15 @@ ares_status_t ares_conn_interpret_events(ares_fd_events_t      **out,
       continue;
     }
 
+    /* Want-flags redirect events while an operation is blocked inside the
+     * TLS layer (e.g. a logical write needing a readable socket during a
+     * handshake).  When an operation's want-group is empty the TLS layer
+     * has no opinion and the event passes through with its natural
+     * meaning, so pending upper-layer work (like a queued query right
+     * after the handshake completes) still gets dispatched. */
     sf = ares_tlsimp_get_stateflag(conn->tls);
     if (events[i].events & ARES_FD_EVENT_READ) {
-      if (sf & ARES_TLS_SF_READ_WANTREAD) {
+      if (sf & ARES_TLS_SF_READ_WANTREAD || !(sf & ARES_TLS_SF_READ)) {
         (*out)[cnt].events |= ARES_FD_EVENT_READ;
       }
       if (sf & ARES_TLS_SF_WRITE_WANTREAD) {
@@ -573,7 +665,7 @@ ares_status_t ares_conn_interpret_events(ares_fd_events_t      **out,
       if (sf & ARES_TLS_SF_READ_WANTWRITE) {
         (*out)[cnt].events |= ARES_FD_EVENT_READ;
       }
-      if (sf & ARES_TLS_SF_WRITE_WANTWRITE) {
+      if (sf & ARES_TLS_SF_WRITE_WANTWRITE || !(sf & ARES_TLS_SF_WRITE)) {
         (*out)[cnt].events |= ARES_FD_EVENT_WRITE;
       }
     }

@@ -36,6 +36,18 @@ typedef struct ares_conn ares_conn_t;
 struct ares_server;
 typedef struct ares_server ares_server_t;
 
+/*! TLS certificate verification behavior for a DoT server */
+typedef enum {
+  /*! Strict when an authentication name is configured, opportunistic
+   *  otherwise (RFC 8310) */
+  ARES_TLS_VERIFY_DEFAULT = 0,
+  /*! Verify the certificate chain (and the authentication name when
+   *  configured); fail the connection otherwise */
+  ARES_TLS_VERIFY_STRICT = 1,
+  /*! Encrypt but perform no certificate verification */
+  ARES_TLS_VERIFY_OPPORTUNISTIC = 2
+} ares_tls_verify_t;
+
 typedef enum {
   /*! No flags */
   ARES_CONN_FLAG_NONE = 0,
@@ -154,6 +166,13 @@ struct ares_server {
   char                  ll_iface[64];    /* IPv6 Link Local Interface */
   unsigned int          ll_scope;        /* IPv6 Link Local Scope */
 
+  /* DNS-over-TLS (RFC 7858) configuration */
+  ares_bool_t           use_tls;           /* Server speaks TLS (over TCP) */
+  ares_tls_verify_t     tls_verify;        /* Certificate verification mode */
+  char                  tls_hostname[256]; /* Authentication name for SNI and
+                                            * certificate verification; blank
+                                            * for none */
+
   size_t                consec_failures; /* Consecutive query failure count
                                           * can be hard errors or timeouts
                                           */
@@ -189,6 +208,15 @@ ares_conn_err_t ares_conn_write(ares_conn_t *conn, const void *data, size_t len,
 ares_status_t ares_conn_flush(ares_conn_t *conn);
 ares_conn_err_t ares_conn_read(ares_conn_t *conn, void *data, size_t len,
                                size_t *read_bytes);
+
+/*! Raw socket read/write, bypassing any TLS layering on the connection.
+ *  These are what the TLS backend's I/O bridge calls; everything else uses
+ *  ares_conn_read()/ares_conn_write() which route through TLS when
+ *  applicable. */
+ares_conn_err_t ares_conn_read_raw(ares_conn_t *conn, void *data, size_t len,
+                                   size_t *read_bytes);
+ares_conn_err_t ares_conn_write_raw(ares_conn_t *conn, const void *data,
+                                    size_t len, size_t *written);
 ares_status_t ares_conn_interpret_events(ares_fd_events_t      **out,
                                          ares_channel_t         *channel,
                                          const ares_fd_events_t *events,

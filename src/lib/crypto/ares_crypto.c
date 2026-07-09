@@ -107,12 +107,16 @@ static char *ares_tls_session_key(ares_conn_t *conn)
     return NULL;
   }
 
-  /* Format:  hostname@[ip]:port
-   *
-   * The hostname component is the server's TLS authentication name.  No
-   * server-level TLS configuration exists yet so it is currently always
-   * blank; the '@' separator is kept so keys stay stable when the name
-   * is plumbed through. */
+  /* Format:  hostname@[ip]:port -- the hostname component is the server's
+   * TLS authentication name (blank when none is configured) so the same
+   * ip:port with different names never share sessions */
+  if (ares_strlen(conn->server->tls_hostname) > 0) {
+    status = ares_buf_append_str(buf, conn->server->tls_hostname);
+    if (status != ARES_SUCCESS) {
+      goto done;
+    }
+  }
+
   status = ares_buf_append_str(buf, "@[");
   if (status != ARES_SUCCESS) {
     goto done;

@@ -57,15 +57,6 @@
 #include "ares_data.h"
 #include "ares_inet_net_pton.h"
 
-typedef struct {
-  struct ares_addr addr;
-  unsigned short   tcp_port;
-  unsigned short   udp_port;
-
-  char             ll_iface[IF_NAMESIZE];
-  unsigned int     ll_scope;
-} ares_sconfig_t;
-
 static ares_bool_t ares_addr_match(const struct ares_addr *addr1,
                                    const struct ares_addr *addr2)
 {
@@ -207,12 +198,22 @@ static ares_status_t parse_nameserver_uri(ares_buf_t     *buf,
   char          hoststr[256];
   size_t        addrlen;
 
+  memset(sconfig, 0, sizeof(*sconfig));
+
   status = ares_uri_parse_buf(&uri, buf);
   if (status != ARES_SUCCESS) {
     return status;
   }
 
-  if (!ares_streq("dns", ares_uri_get_scheme(uri))) {
+  if (ares_streq("dns+tls", ares_uri_get_scheme(uri))) {
+#ifdef CARES_USE_CRYPTO
+    sconfig->use_tls = ARES_TRUE;
+#else
+    /* Fail configuration up front rather than every connection attempt */
+    status = ARES_ENOTIMP;
+    goto done;
+#endif
+  } else if (!ares_streq("dns", ares_uri_get_scheme(uri))) {
     status = ARES_EBADSTR;
     goto done;
   }
@@ -239,6 +240,33 @@ static ares_status_t parse_nameserver_uri(ares_buf_t     *buf,
     if (!ares_parse_port(port, &sconfig->tcp_port, ARES_TRUE)) {
       status = ARES_EBADSTR;
       goto done;
+    }
+  }
+
+  if (sconfig->use_tls) {
+    const char *hostname = ares_uri_get_query_key(uri, "hostname");
+    const char *verify   = ares_uri_get_query_key(uri, "verify");
+
+    if (hostname != NULL) {
+      if (ares_strlen(hostname) == 0 ||
+          ares_strlen(hostname) >= sizeof(sconfig->tls_hostname) ||
+          !ares_str_isprint(hostname, ares_strlen(hostname))) {
+        status = ARES_EBADSTR;
+        goto done;
+      }
+      ares_strcpy(sconfig->tls_hostname, hostname,
+                  sizeof(sconfig->tls_hostname));
+    }
+
+    if (verify != NULL) {
+      if (ares_streq(verify, "strict")) {
+        sconfig->tls_verify = ARES_TLS_VERIFY_STRICT;
+      } else if (ares_streq(verify, "opportunistic")) {
+        sconfig->tls_verify = ARES_TLS_VERIFY_OPPORTUNISTIC;
+      } else {
+        status = ARES_EBADSTR;
+        goto done;
+      }
     }
   }
 
@@ -443,21 +471,19 @@ static ares_status_t ares_sconfig_linklocal(const ares_channel_t *channel,
   return ARES_SUCCESS;
 }
 
-ares_status_t ares_sconfig_append(const ares_channel_t   *channel,
-                                  ares_llist_t          **sconfig,
-                                  const struct ares_addr *addr,
-                                  unsigned short          udp_port,
-                                  unsigned short tcp_port, const char *ll_iface)
+ares_status_t ares_sconfig_append(const ares_channel_t *channel,
+                                  ares_llist_t        **sconfig,
+                                  const ares_sconfig_t *sconfig_entry)
 {
   ares_sconfig_t *s;
   ares_status_t   status;
 
-  if (sconfig == NULL || addr == NULL) {
+  if (sconfig == NULL || sconfig_entry == NULL) {
     return ARES_EFORMERR; /* LCOV_EXCL_LINE: DefensiveCoding */
   }
 
   /* Silently skip blacklisted IPv6 servers. */
-  if (ares_server_blacklisted(addr)) {
+  if (ares_server_blacklisted(&sconfig_entry->addr)) {
     return ARES_SUCCESS;
   }
 
@@ -474,19 +500,23 @@ ares_status_t ares_sconfig_append(const ares_channel_t   *channel,
     }
   }
 
-  memcpy(&s->addr, addr, sizeof(s->addr));
-  s->udp_port = udp_port;
-  s->tcp_port = tcp_port;
+  memcpy(s, sconfig_entry, sizeof(*s));
+  s->ll_scope = 0;
+  if (!ares_addr_is_linklocal(&s->addr)) {
+    /* An interface specified on a non-link-local address is ignored */
+    memset(s->ll_iface, 0, sizeof(s->ll_iface));
+  }
 
   /* Handle link-local enumeration. If an interface is specified on a
    * non-link-local address, we'll simply end up ignoring that */
   if (ares_addr_is_linklocal(&s->addr)) {
-    if (ares_strlen(ll_iface) == 0) {
+    if (ares_strlen(sconfig_entry->ll_iface) == 0) {
       /* Silently ignore this entry, we require an interface */
       status = ARES_SUCCESS;
       goto fail;
     }
-    status = ares_sconfig_linklocal(channel, s, ll_iface);
+    memset(s->ll_iface, 0, sizeof(s->ll_iface));
+    status = ares_sconfig_linklocal(channel, s, sconfig_entry->ll_iface);
     /* Silently ignore this entry, we can't validate the interface */
     if (status != ARES_SUCCESS) {
       status = ARES_SUCCESS;
@@ -568,8 +598,7 @@ ares_status_t ares_sconfig_append_fromstr(const ares_channel_t *channel,
       }
     }
 
-    status = ares_sconfig_append(channel, sconfig, &s.addr, s.udp_port,
-                                 s.tcp_port, s.ll_iface);
+    status = ares_sconfig_append(channel, sconfig, &s);
     if (status != ARES_SUCCESS) {
       goto done; /* LCOV_EXCL_LINE: OutOfMemory */
     }
@@ -594,10 +623,43 @@ static unsigned short ares_sconfig_get_port(const ares_channel_t *channel,
   }
 
   if (port == 0) {
-    port = 53;
+    /* DNS-over-TLS standard port is 853 (RFC 7858) */
+    port = s->use_tls ? 853 : 53;
   }
 
   return port;
+}
+
+/* TLS settings are part of a server's identity: the same ip:port with a
+ * different authentication name or verification mode is a different server */
+static ares_bool_t ares_server_tls_match(const ares_server_t  *server,
+                                         const ares_sconfig_t *s)
+{
+  if (server->use_tls != s->use_tls) {
+    return ARES_FALSE;
+  }
+  if (!server->use_tls) {
+    return ARES_TRUE;
+  }
+  if (server->tls_verify != s->tls_verify) {
+    return ARES_FALSE;
+  }
+  return ares_streq(server->tls_hostname, s->tls_hostname);
+}
+
+static ares_bool_t ares_sconfig_tls_match(const ares_sconfig_t *s1,
+                                          const ares_sconfig_t *s2)
+{
+  if (s1->use_tls != s2->use_tls) {
+    return ARES_FALSE;
+  }
+  if (!s1->use_tls) {
+    return ARES_TRUE;
+  }
+  if (s1->tls_verify != s2->tls_verify) {
+    return ARES_FALSE;
+  }
+  return ares_streq(s1->tls_hostname, s2->tls_hostname);
 }
 
 static ares_slist_node_t *ares_server_find(const ares_channel_t *channel,
@@ -618,6 +680,10 @@ static ares_slist_node_t *ares_server_find(const ares_channel_t *channel,
     }
 
     if (server->udp_port != ares_sconfig_get_port(channel, s, ARES_FALSE)) {
+      continue;
+    }
+
+    if (!ares_server_tls_match(server, s)) {
       continue;
     }
 
@@ -648,6 +714,10 @@ static ares_bool_t ares_server_isdup(const ares_channel_t *channel,
 
     if (ares_sconfig_get_port(channel, server, ARES_FALSE) !=
         ares_sconfig_get_port(channel, p, ARES_FALSE)) {
+      continue;
+    }
+
+    if (!ares_sconfig_tls_match(server, p)) {
       continue;
     }
 
@@ -690,6 +760,12 @@ static ares_status_t ares_server_create(ares_channel_t       *channel,
     server->ll_scope = sconfig->ll_scope;
   }
 
+  /* Copy over DNS-over-TLS settings */
+  server->use_tls    = sconfig->use_tls;
+  server->tls_verify = sconfig->tls_verify;
+  ares_strcpy(server->tls_hostname, sconfig->tls_hostname,
+              sizeof(server->tls_hostname));
+
   server->connections = ares_llist_create(NULL);
   if (server->connections == NULL) {
     status = ARES_ENOMEM; /* LCOV_EXCL_LINE: OutOfMemory */
@@ -730,6 +806,10 @@ static ares_bool_t ares_server_in_newconfig(const ares_server_t *server,
     }
 
     if (server->udp_port != ares_sconfig_get_port(channel, s, ARES_FALSE)) {
+      continue;
+    }
+
+    if (!ares_server_tls_match(server, s)) {
       continue;
     }
 
@@ -1001,9 +1081,12 @@ fail:
 
 static ares_bool_t ares_server_use_uri(const ares_server_t *server)
 {
-  /* Currently only reason to use new format is if the ports for udp and tcp
-   * are different */
+  /* The URI format is needed if the udp and tcp ports differ, or the server
+   * carries TLS settings */
   if (server->tcp_port != server->udp_port) {
+    return ARES_TRUE;
+  }
+  if (server->use_tls) {
     return ARES_TRUE;
   }
   return ARES_FALSE;
@@ -1021,7 +1104,7 @@ static ares_status_t ares_get_server_addr_uri(const ares_server_t *server,
     return ARES_ENOMEM;
   }
 
-  status = ares_uri_set_scheme(uri, "dns");
+  status = ares_uri_set_scheme(uri, server->use_tls ? "dns+tls" : "dns");
   if (status != ARES_SUCCESS) {
     goto done;
   }
@@ -1052,6 +1135,24 @@ static ares_status_t ares_get_server_addr_uri(const ares_server_t *server,
     status = ares_uri_set_query_key(uri, "tcpport", port);
     if (status != ARES_SUCCESS) {
       goto done;
+    }
+  }
+
+  if (server->use_tls) {
+    if (ares_strlen(server->tls_hostname)) {
+      status = ares_uri_set_query_key(uri, "hostname", server->tls_hostname);
+      if (status != ARES_SUCCESS) {
+        goto done;
+      }
+    }
+    if (server->tls_verify != ARES_TLS_VERIFY_DEFAULT) {
+      status = ares_uri_set_query_key(
+        uri, "verify",
+        server->tls_verify == ARES_TLS_VERIFY_STRICT ? "strict"
+                                                     : "opportunistic");
+      if (status != ARES_SUCCESS) {
+        goto done;
+      }
     }
   }
 

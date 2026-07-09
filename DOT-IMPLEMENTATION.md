@@ -122,12 +122,16 @@ deferred to its phase:
       shutdown, and early-data write now publish want-flags (connect and
       shutdown publish both logical directions since handshake progress
       gates everything).
-- [x] `SSL_CTX_set_read_ahead(1)` buffers TLS records inside OpenSSL:
-      decrypted data can be pending with no fd readable event.  Resolved
-      at the backend level with `ares_tlsimp_get_read_pending()`
-      (`SSL_has_pending()`) plus the documented drain contract, pinned by
-      the CryptoTLSReadPending test.  The Phase 1 I/O-routing item must
-      honor it in the process loop.
+- [x] `SSL_CTX_set_read_ahead(1)` buffered TLS records inside OpenSSL so
+      decrypted data could be pending with no fd readable event.  During
+      Phase 1 integration this caused a nondeterministic race (responses
+      stuck inside the TLS layer until query timeout, spurious reconnects).
+      **Removed read-ahead entirely** -- without it every byte the client
+      needs corresponds to socket-readable data and the standard event loop
+      works unchanged; c-ares is not throughput-bound so the extra
+      SSL_read calls don't matter.  `ares_tlsimp_get_read_pending()`
+      (`SSL_has_pending()`) is retained as defensive API, still pinned by
+      the CryptoTLSReadPending test.
 - [x] **[pre-harness]** Debug `fprintf(stderr, ...)` calls left in
       `ares_cryptoimp_ctx_init()`.
 - [x] `SSL_CTX_set_security_level(3)` — decided: **level 2**.  The harness
@@ -245,32 +249,29 @@ runtime-generated CA and server plumbing) rather than starting from scratch;
 Phase 3 also re-exercises the event remapping through the real process loop
 across all event backends.
 
-- [ ] **Server-level TLS configuration** in `ares_server_t` /
-      `ares_sconfig_t`: `use_tls` flag, TLS port (default **853**, RFC 7858),
-      optional authentication name (hostname for SNI + certificate
-      verification), verification mode (strict / opportunistic / insecure).
-- [ ] **Connection setup**: in the conn creation path, when the server
-      config says TLS, set `ARES_CONN_FLAG_TLS`, create the TLS session via
-      `ares_tlsimp_create()` after socket connect starts, and drive
-      `ares_tlsimp_connect()` from the process loop until ESTABLISHED
-      (states already exist).  TLS implies `ARES_CONN_FLAG_TCP` framing
-      (2-byte length prefix — the existing TCP framing code is reused
-      unchanged above the TLS layer).
-- [ ] **I/O routing**: `ares_conn_read()` / `ares_conn_write()` /
-      `ares_conn_flush()` route through `ares_tlsimp_read()` /
-      `ares_tlsimp_write()` when `ARES_CONN_FLAG_TLS` (the BIO underneath
-      calls the raw socket paths).  Honor the OpenSSL retry contract:
-      repeated `SSL_write_ex()` after WOULDBLOCK must present the same
-      logical data.
-- [ ] **SNI + hostname verification**: plumb the configured
-      authentication name into `SSL_set_tlsext_host_name()` and
-      `SSL_set1_host()` (both currently commented out).  Strict mode fails
-      the connection on verification failure; opportunistic mode disables
-      verification but still encrypts; with no name configured and strict
-      not requested, fall back to opportunistic per RFC 8310.
-- [ ] **Session cache completion**: real hostname in the session key;
-      insert path exercised via the new-session callback; single-use
-      tickets for TLS 1.3 (already removed on get — verify refcounts).
+- [x] **Server-level TLS configuration** in `ares_server_t` /
+      `ares_sconfig_t`: `use_tls`, `tls_hostname` (auth name), `tls_verify`
+      (default/strict/opportunistic); default port 853; TLS settings are
+      part of server identity (find/isdup/in_newconfig compare them).
+- [x] **Connection setup**: `ares_open_connection()` sets
+      `ARES_CONN_FLAG_TLS` and creates the session for TLS servers; queries
+      to a TLS server are forced onto TCP (`ares_send_query_int`); the
+      handshake is pumped lazily from the read/write entry points
+      (`ares_conn_tls_pump`) until ESTABLISHED; existing TCP framing reused
+      above TLS unchanged.  TFO is deferred for TLS connections.
+- [x] **I/O routing**: `ares_conn_read()`/`ares_conn_write()` split into
+      raw (`_raw`) and TLS-routed forms; the BIO bridge calls the raw
+      paths to avoid recursion; the same-data retry contract holds
+      (verified by the partial-write test).
+- [x] **SNI + hostname verification**: `tls_hostname` plumbed into
+      `SSL_set_tlsext_host_name()` + `SSL_set1_host()`; default resolves to
+      strict-with-name / opportunistic-without per RFC 8310; opportunistic
+      sets `SSL_VERIFY_NONE`.  The end-to-end verify-fail test confirms
+      strict does not fall back to plaintext.
+- [x] **Session cache completion**: session key includes the real
+      `tls_hostname` so different auth names never share sessions; insert
+      via the new-session callback and single-use consumption are covered
+      by the resumption test.
 - [ ] **TLS v1.3 Early Data (0-RTT)**: on connection setup, if a cached
       session reports `max_early_data > 0`, serialize the first pending
       query (TCP length-prefixed) via `ares_tlsimp_earlydata_write()`
@@ -287,10 +288,10 @@ across all event backends.
       Verify the existing TFO plumbing (`ARES_CONN_FLAG_TFO*`) composes
       with the TLS connect path on Linux/macOS, and degrades cleanly where
       TFO is unavailable.
-- [ ] **Shutdown & teardown**: graceful `ares_tlsimp_shutdown()` on
-      connection close where practical (don't block teardown on it);
-      `ares_tlsimp_destroy()` in conn cleanup; interaction with
-      `ARES_CONN_FLAG_NONEW` connection retirement.
+- [x] **Shutdown & teardown**: best-effort `ares_tlsimp_shutdown()` on
+      close of an established TLS connection (preserves the session for
+      resumption), `ares_tlsimp_destroy()` in the cleanup path and the
+      open-connection error path.
 - [ ] **Timeout behavior**: handshake counts against query timeout;
       confirm a stalled handshake trips the existing timeout/retry
       machinery and marks the connection failed rather than hanging.
@@ -470,6 +471,28 @@ already exists from Phase 1 Step 0; this phase covers the integrated stack.
 - 2026-07-08: branch squashed onto current main (`513601c3`); this
   document added.  State: building blocks only, feature inert; defect list
   and phased plan recorded above.
+- 2026-07-09: Phase 1 CI shakeout.  Two real regressions caught and fixed
+  (folded into the integration commit): (1) parse_nameserver_uri() never
+  zeroed its output struct -- unlike parse_nameserver() -- so the new
+  use_tls field was stack garbage on the URI path, and ares_dup()'s
+  CSV->URI round-trip could then set use_tls spuriously, making a plain
+  server attempt a TLS handshake (VerifySocketFunctionCallback failure on
+  all platforms); (2) a clang-format changed-lines miss.  Remaining
+  MINGW64 failure is the pre-existing load-flaky
+  MockUDPEventThreadMaxQueriesTest (UDP burst stress, documented flaky on
+  Windows; the DoT changes leave the UDP datagram path byte-identical) --
+  re-run, not a code issue.
+- 2026-07-09: Phase 1 connection integration landed.  DoT is now
+  functional end-to-end: `dns+tls://ip[:port]?hostname=&verify=` server
+  config (identity-aware dedup, CSV round-trip), TLS flag + session on the
+  connection, lazy handshake pump from the I/O entry points, raw/routed
+  read-write split, SNI + strict/opportunistic verification, session key
+  with real hostname, graceful close.  New tests: TLSServerConfigCSV,
+  CryptoDoTQuery (real ares_gethostbyname over a threaded in-test DoT
+  server, connection reuse asserted), CryptoDoTVerifyFail.  Integration
+  surfaced the read-ahead race (see defect list) -- removed read-ahead,
+  now deterministic (15/15).  Full suite green under default and crypto
+  builds.
 - 2026-07-09: matrix green again at 29/29 after the MSVC leg landed.
   MSVC shakeout: chocolatey deploys OpenSSL to 'C:\Program Files\OpenSSL'
   (and currently ships OpenSSL 4.0.x, so the backend now has a
