@@ -547,11 +547,9 @@ ares_status_t ares_tlsimp_create(ares_tls_t          **tls,
   /* SSL object owns the bio (both directions) from here on */
   SSL_set_bio(state->ssl, bio, bio);
 
-  /* Set hostname for peer verification */
-  // SSL_set1_host(state->ssl, conn->hostname);
-
-  /* Set the hostname for SNI */
-  // SSL_set_tlsext_host_name(state->ssl, conn->hostname);
+  /* Peer hostname verification (SSL_set1_host()) and SNI
+   * (SSL_set_tlsext_host_name()) are wired in once server-level TLS
+   * configuration provides an authentication name */
 
   /* Session handling */
   sess = ares_tls_session_get(crypto_ctx->parent, conn);

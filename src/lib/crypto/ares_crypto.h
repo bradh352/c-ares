@@ -59,8 +59,8 @@ struct ares_crypto_ctx;
 typedef struct ares_crypto_ctx ares_crypto_ctx_t;
 
 
-ares_status_t                  ares_crypto_ctx_init(ares_crypto_ctx_t **ctx);
-void                           ares_crypto_ctx_destroy(ares_crypto_ctx_t *ctx);
+ares_status_t ares_crypto_ctx_init(ares_crypto_ctx_t **ctx);
+void ares_crypto_ctx_destroy(ares_crypto_ctx_t *ctx);
 
 struct ares_tls;
 typedef struct ares_tls ares_tls_t;
@@ -113,17 +113,17 @@ typedef struct ares_cryptoimp_ctx ares_cryptoimp_ctx_t;
 
 ares_status_t ares_cryptoimp_ctx_init(ares_cryptoimp_ctx_t **ctx,
                                       ares_crypto_ctx_t     *parent);
-void          ares_cryptoimp_ctx_destroy(ares_cryptoimp_ctx_t *ctx);
+void ares_cryptoimp_ctx_destroy(ares_cryptoimp_ctx_t *ctx);
 ares_status_t ares_tlsimp_set_cadata(ares_cryptoimp_ctx_t *ctx,
                                      const unsigned char *pem, size_t len);
 
 
-ares_status_t           ares_tlsimp_create(ares_tls_t          **tls,
-                                           ares_cryptoimp_ctx_t *crypto_ctx,
-                                           ares_conn_t          *conn);
-ares_tls_state_t        ares_tlsimp_get_state(ares_tls_t *tls);
-ares_tls_stateflag_t    ares_tlsimp_get_stateflag(ares_tls_t *tls);
-size_t                  ares_tlsimp_get_earlydata_size(ares_tls_t *tls);
+ares_status_t ares_tlsimp_create(ares_tls_t          **tls,
+                                 ares_cryptoimp_ctx_t *crypto_ctx,
+                                 ares_conn_t          *conn);
+ares_tls_state_t ares_tlsimp_get_state(ares_tls_t *tls);
+ares_tls_stateflag_t ares_tlsimp_get_stateflag(ares_tls_t *tls);
+size_t ares_tlsimp_get_earlydata_size(ares_tls_t *tls);
 
 /*! Whether the early data sent with ares_tlsimp_earlydata_write() was
  *  accepted by the server.  Only meaningful once the connection has
@@ -136,17 +136,17 @@ ares_bool_t ares_tlsimp_earlydata_accepted(ares_tls_t *tls);
  *  ARES_TRUE the caller must keep reading instead of waiting on socket
  *  events. */
 ares_bool_t ares_tlsimp_get_read_pending(ares_tls_t *tls);
-void                    ares_tlsimp_destroy(ares_tls_t *tls);
-ares_conn_err_t         ares_tlsimp_earlydata_write(ares_tls_t          *tls,
-                                                    const unsigned char *buf,
-                                                    size_t              *buf_len);
-ares_conn_err_t         ares_tlsimp_read(ares_tls_t *tls, unsigned char *buf,
-                                         size_t *buf_len);
+void ares_tlsimp_destroy(ares_tls_t *tls);
+ares_conn_err_t ares_tlsimp_earlydata_write(ares_tls_t          *tls,
+                                            const unsigned char *buf,
+                                            size_t              *buf_len);
+ares_conn_err_t ares_tlsimp_read(ares_tls_t *tls, unsigned char *buf,
+                                 size_t *buf_len);
 ares_conn_err_t ares_tlsimp_write(ares_tls_t *tls, const unsigned char *buf,
                                   size_t *buf_len);
 ares_conn_err_t ares_tlsimp_shutdown(ares_tls_t *tls);
 ares_conn_err_t ares_tlsimp_connect(ares_tls_t *tls);
-void            ares_tlsimp_session_free(void *arg);
+void ares_tlsimp_session_free(void *arg);
 
 /*! @} */
 
