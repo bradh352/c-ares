@@ -468,11 +468,13 @@ ares_status_t ares_cryptoimp_ctx_init(ares_cryptoimp_ctx_t **ctx,
     goto done;
   }
 
-  /* Load root certificates into client ctx */
-  status = ares_ossl_load_caroots((*ctx)->sslctx, (*ctx)->ctx);
-  if (status != ARES_SUCCESS) {
-    goto done;
-  }
+  /* Load system trust anchors into the client ctx.  Failure is NOT fatal:
+   * the crypto context initializes with every channel and the channel may
+   * never use TLS, and minimal environments (containers, embedded) often
+   * carry no CA bundle at all.  A TLS connection that actually needs
+   * verification without trust anchors fails at connect time with
+   * ARES_CONN_ERR_SECURITY instead. */
+  (void)ares_ossl_load_caroots((*ctx)->sslctx, (*ctx)->ctx);
 
   SSL_CTX_set_read_ahead((*ctx)->sslctx, 1);
   SSL_CTX_set_app_data((*ctx)->sslctx, *ctx);
