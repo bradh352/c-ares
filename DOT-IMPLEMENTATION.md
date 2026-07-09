@@ -309,8 +309,13 @@ Recorded from analysis (2026-07-09) so the rationale isn't lost:
   Not covered: parallel connection bursts to one server — the second
   simultaneous connection finds the cache empty and full-handshakes
   (correct, just not 0-RTT).  If that ever matters, upgrade to a per-key
-  ticket queue (new-session callback appends, create pops) and consider
-  requesting more tickets.
+  ticket queue (new-session callback appends, create pops); note the
+  queue depth is bounded by however many tickets the server chooses to
+  issue (OpenSSL servers default to 2 per handshake) — ticket count is
+  server policy and a client cannot request more.  Since c-ares keeps a
+  single persistent connection per server and multiplexes queries over
+  it, parallel same-server connections essentially don't occur, which is
+  what justifies the single slot.
 - **TLS 1.2**: the single-use guidance is 1.3-specific; 1.2 tickets
   (RFC 5077) are conventionally reused and have no early data.  Our
   uniform single-use policy just costs a 1.2 server an occasional extra
