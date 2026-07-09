@@ -190,7 +190,7 @@ Prerequisites (beyond the **[pre-harness]** defect fixes above):
       thin generic wrapper (e.g. `ares_tls_create(crypto_ctx, conn)`)
       dereferencing internally — the Phase 1 connection integration needs
       this entry point anyway, so it is not test-only scaffolding.
-- [x] **Test build plumbing** (CMake done; CI legs pending): link
+- [x] **Test build plumbing**: link
       OpenSSL into `arestest` when
       `CARES_CRYPTO=ON` (the harness drives a server `SSL_CTX` directly)
       and add a `CARES_CRYPTO=ON` CI leg (ubuntu first; ASAN variant early
@@ -452,6 +452,11 @@ already exists from Phase 1 Step 0; this phase covers the integrated stack.
 - 2026-07-08: branch squashed onto current main (`513601c3`); this
   document added.  State: building blocks only, feature inert; defect list
   and phased plan recorded above.
+- 2026-07-09: CARES_CRYPTO CI legs added (Ubuntu build+test + ASAN
+  variant; MSYS2 MINGW64/CLANG64 with openssl — first CI ever to compile
+  the Windows cert-store path) and draft PR
+  [#1252](https://github.com/c-ares/c-ares/pull/1252) opened against
+  upstream so the full matrix runs on every push of this branch.
 - 2026-07-09: remaining backend defect list cleared (session-key
   partial/placeholder, insert key leak, dead write block, read-ahead
   pending accessor + drain contract, Windows cert-store rewrite --
