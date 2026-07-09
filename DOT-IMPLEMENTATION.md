@@ -152,8 +152,9 @@ deferred to its phase:
       `M_CAST_OFF_CONST` macro that does not exist in this tree, and the
       cast pattern let `d2i_X509` advance (mutate) the enumeration
       context's `pbCertEncoded` field.  Rewritten with a local pointer and
-      `CertOpenSystemStoreA` (UNICODE-safe).  Compile verification needs
-      the Windows crypto CI leg.
+      `CertOpenSystemStoreA` (UNICODE-safe); crypt32 linked in CMake and
+      autotools.  Verified: the MSYS2 crypto CI legs compile, link and
+      test it (PR #1252 green).
 - [x] Error mapping reworked: certificate-verification failures return
       the new `ARES_CONN_ERR_SECURITY` (via `SSL_get_verify_result()`,
       pinned by the verify-fail test); a clean TLS close_notify maps to
@@ -462,6 +463,12 @@ already exists from Phase 1 Step 0; this phase covers the integrated stack.
 - 2026-07-08: branch squashed onto current main (`513601c3`); this
   document added.  State: building blocks only, feature inert; defect list
   and phased plan recorded above.
+- 2026-07-09: PR #1252 CI matrix fully green (28/28) including the crypto
+  legs.  Shakeout fixed real issues: C90 comment lexing in -Werror
+  builds, base-diff clang-format, ares_init() hard-failing on CA-less
+  systems (containers/embedded; root loading now best-effort), and
+  missing crypt32 linkage on Windows (first-ever compile+link+test of
+  the wincrypt cert-store path).
 - 2026-07-09: CARES_CRYPTO CI legs added (Ubuntu build+test + ASAN
   variant; MSYS2 MINGW64/CLANG64 with openssl — first CI ever to compile
   the Windows cert-store path) and draft PR
