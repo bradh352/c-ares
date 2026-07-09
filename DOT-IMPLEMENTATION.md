@@ -286,6 +286,36 @@ across all event backends.
       (RFC 7828) to hold connections open — c-ares already has an
       idle-connection concept for TCP to piggyback on.
 
+## Session ticket / single-use design notes
+
+Recorded from analysis (2026-07-09) so the rationale isn't lost:
+
+- **Single-use is deliberate, not mandated**: RFC 8446 Appendix C.4 says
+  clients SHOULD NOT reuse a ticket (passive-observer correlation — a real
+  privacy concern for DNS).  Additionally, server-side 0-RTT anti-replay
+  (RFC 8446 sec. 8.1) commonly enforces single-use tickets, so reuse would
+  get the 0-RTT flight rejected by strict servers anyway.  Single-use
+  client behavior is both the privacy-correct and the
+  reliably-fast choice.
+- **The 0-RTT benefit is not one-shot — tickets replenish**: TLS 1.3
+  servers send multiple NewSessionTicket messages per connection (OpenSSL
+  default 2, tunable via SSL_CTX_set_num_tickets()), and fresh tickets are
+  also issued on *resumed* connections.  Steady state is 0-RTT on every
+  reconnect, indefinitely.  The CryptoTLSSessionResumption test pins the
+  repopulation behavior.
+- **Single-slot cache is a deliberate simplification**: the cache keeps
+  one (the newest) ticket per server key.  With c-ares's
+  one-connection-per-server model that sustains an unbroken 0-RTT chain.
+  Not covered: parallel connection bursts to one server — the second
+  simultaneous connection finds the cache empty and full-handshakes
+  (correct, just not 0-RTT).  If that ever matters, upgrade to a per-key
+  ticket queue (new-session callback appends, create pops) and consider
+  requesting more tickets.
+- **TLS 1.2**: the single-use guidance is 1.3-specific; 1.2 tickets
+  (RFC 5077) are conventionally reused and have no early data.  Our
+  uniform single-use policy just costs a 1.2 server an occasional extra
+  full handshake — acceptable, and DoT deployments are 1.3-era.
+
 ## Phase 2 — Configuration hookup
 
 ### Manual configuration (URI scheme)
