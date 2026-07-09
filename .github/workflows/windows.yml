@@ -32,7 +32,7 @@ jobs:
           # Crypto (DoT) build against OpenSSL; the TLS test harness is
           # POSIX-only so this validates MSVC compile/link of the crypto
           # backend plus the full non-TLS suite under the crypto build.
-          - { name: "MSVC x64 (CMake+OpenSSL)", arch: x64, conftool: CMAKE, crypto: yes, cmake_extra: '-DCARES_CRYPTO=ON -DOPENSSL_ROOT_DIR="C:\Program Files\OpenSSL-Win64"' }
+          - { name: "MSVC x64 (CMake+OpenSSL)", arch: x64, conftool: CMAKE, crypto: yes, cmake_extra: '-DCARES_CRYPTO=ON -DOPENSSL_ROOT_DIR="C:\Program Files\OpenSSL"' }
     name: ${{ matrix.name }}
     steps:
       - name: Setup MSVC environment (${{ matrix.arch }})
@@ -48,7 +48,7 @@ jobs:
         shell: cmd
         run: |
           choco install openssl -y --no-progress --limit-output || exit /b 1
-          echo C:\Program Files\OpenSSL-Win64\bin>> %GITHUB_PATH%
+          echo C:\Program Files\OpenSSL\bin>> %GITHUB_PATH%
 
       - name: Build GoogleTest
         shell: cmd
