@@ -425,9 +425,16 @@ already exists from Phase 1 Step 0; this phase covers the integrated stack.
       that behaves differently per backend.
 - [ ] **Live tests** (opt-in, like existing live suite): 1.1.1.1 /
       8.8.8.8 / 9.9.9.9 with their hostnames, strict mode.
-- [ ] **CI**: add `CARES_CRYPTO=ON` legs (Ubuntu, macOS, Windows+OpenSSL),
-      including ASAN and the Werror gate; keep a no-crypto leg guarding
-      the stubs. `reuse lint` for new files.
+- [x] **CI**: `CARES_CRYPTO=ON` legs running on every push via draft PR
+      #1252: Ubuntu (build+test incl. containers, Werror) + Ubuntu ASAN,
+      MSYS2 MINGW64/CLANG64 (mingw openssl), and MSVC x64
+      (choco OpenSSL) — the MSVC leg validates compile/link and the full
+      non-TLS suite under the crypto build since the TLS harness is
+      POSIX-only.  All other legs keep guarding the no-crypto stubs.
+      Remaining: macOS crypto leg (Security-framework root loading is
+      only compile-checked today via local dev builds); nmake/static
+      makefiles stay stub-only by design.  `reuse lint` covers new files
+      via the existing job.
 - [ ] **Fuzzing**: framing above TLS is the existing TCP framing (already
       fuzzed); no new parser surface expected.  Revisit if a config-string
       surface (URI query keys) grows — extend the existing URI fuzzing
