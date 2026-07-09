@@ -477,11 +477,17 @@ already exists from Phase 1 Step 0; this phase covers the integrated stack.
   use_tls field was stack garbage on the URI path, and ares_dup()'s
   CSV->URI round-trip could then set use_tls spuriously, making a plain
   server attempt a TLS handshake (VerifySocketFunctionCallback failure on
-  all platforms); (2) a clang-format changed-lines miss.  Remaining
-  MINGW64 failure is the pre-existing load-flaky
-  MockUDPEventThreadMaxQueriesTest (UDP burst stress, documented flaky on
-  Windows; the DoT changes leave the UDP datagram path byte-identical) --
-  re-run, not a code issue.
+  all platforms); (2) a clang-format changed-lines miss.  The MINGW64 crypto-build failure of the UDP burst-stress
+  MockUDPEventThreadMaxQueriesTest turned out to be a real (if
+  DoT-unrelated) issue: the crypto context was initialized eagerly in
+  every ares_init(), and on Windows that enumerates the entire system
+  root cert store (plus OpenSSL provider load + SSL_CTX) -- per channel,
+  even for channels that never use TLS.  That latency pushed the
+  timing-sensitive burst test over its edge.  Fixed by making the backend
+  lazy: ares_crypto_ctx_init() now only sets up the cheap session-cache
+  tables, and the OpenSSL provider/SSL_CTX/CA-root work is deferred to
+  ares_crypto_ctx_ensure_backend() on first TLS use (ares_tls_create /
+  ares_tls_set_cadata).  Non-DoT channels pay nothing.
 - 2026-07-09: Phase 1 connection integration landed.  DoT is now
   functional end-to-end: `dns+tls://ip[:port]?hostname=&verify=` server
   config (identity-aware dedup, CSV round-trip), TLS flag + session on the

@@ -51,11 +51,11 @@ ares_status_t ares_crypto_ctx_init(ares_crypto_ctx_t **ctx)
     return ARES_ENOMEM;
   }
 
-  status = ares_cryptoimp_ctx_init(&(*ctx)->imp_ctx, *ctx);
-  if (status != ARES_SUCCESS) {
-    goto done;
-  }
-
+  /* The backend (OpenSSL provider load, client SSL_CTX, and -- expensively
+   * on some platforms -- system CA-root enumeration) is created lazily on
+   * first TLS use, not here: a channel that never talks to a DoT server
+   * must not pay that cost at init.  Only the cheap session-cache tables
+   * are set up eagerly. */
   (*ctx)->sess_fwd = ares_htable_strvp_create(ares_tlsimp_session_free);
   if ((*ctx)->sess_fwd == NULL) {
     status = ARES_ENOMEM;
@@ -68,12 +68,26 @@ ares_status_t ares_crypto_ctx_init(ares_crypto_ctx_t **ctx)
     goto done;
   }
 
+  status = ARES_SUCCESS;
+
 done:
   if (status != ARES_SUCCESS) {
     ares_crypto_ctx_destroy(*ctx);
     *ctx = NULL;
   }
   return status;
+}
+
+/*! Lazily create the backend implementation context on first TLS use */
+static ares_status_t ares_crypto_ctx_ensure_backend(ares_crypto_ctx_t *ctx)
+{
+  if (ctx == NULL) {
+    return ARES_EFORMERR;
+  }
+  if (ctx->imp_ctx != NULL) {
+    return ARES_SUCCESS;
+  }
+  return ares_cryptoimp_ctx_init(&ctx->imp_ctx, ctx);
 }
 
 void ares_crypto_ctx_destroy(ares_crypto_ctx_t *ctx)
@@ -217,18 +231,36 @@ ares_status_t ares_tls_session_remove(ares_crypto_ctx_t *crypto_ctx, void *sess)
 ares_status_t ares_tls_create(ares_tls_t **tls, ares_crypto_ctx_t *crypto_ctx,
                               ares_conn_t *conn)
 {
+  ares_status_t status;
+
   if (tls == NULL || crypto_ctx == NULL || conn == NULL) {
     return ARES_EFORMERR;
   }
+
+  status = ares_crypto_ctx_ensure_backend(crypto_ctx);
+  if (status != ARES_SUCCESS) {
+    return status;
+  }
+
   return ares_tlsimp_create(tls, crypto_ctx->imp_ctx, conn);
 }
 
 ares_status_t ares_tls_set_cadata(ares_crypto_ctx_t   *crypto_ctx,
                                   const unsigned char *pem, size_t len)
 {
+  ares_status_t status;
+
   if (crypto_ctx == NULL) {
     return ARES_EFORMERR;
   }
+
+  /* Trust anchors may be configured before any connection; make sure the
+   * backend (and its certificate store) exists */
+  status = ares_crypto_ctx_ensure_backend(crypto_ctx);
+  if (status != ARES_SUCCESS) {
+    return status;
+  }
+
   return ares_tlsimp_set_cadata(crypto_ctx->imp_ctx, pem, len);
 }
 
