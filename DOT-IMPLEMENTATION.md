@@ -470,6 +470,15 @@ already exists from Phase 1 Step 0; this phase covers the integrated stack.
 - 2026-07-08: branch squashed onto current main (`513601c3`); this
   document added.  State: building blocks only, feature inert; defect list
   and phased plan recorded above.
+- 2026-07-09: matrix green again at 29/29 after the MSVC leg landed.
+  MSVC shakeout: chocolatey deploys OpenSSL to 'C:\Program Files\OpenSSL'
+  (and currently ships OpenSSL 4.0.x, so the backend now has a
+  compile/link data point against the new major version).  The Alpine leg
+  caught the best bug of the batch: event translation allocated on every
+  ares_process_fds() call even with no TLS connections, and dropped all
+  fd events on allocation failure -- now allocation-free on the non-TLS
+  hot path with raw-event fallback on ENOMEM (spurious TLS wakeups are
+  harmless, dropped events are not).
 - 2026-07-09: PR #1252 CI matrix fully green (28/28) including the crypto
   legs.  Shakeout fixed real issues: C90 comment lexing in -Werror
   builds, base-diff clang-format, ares_init() hard-failing on CA-less
