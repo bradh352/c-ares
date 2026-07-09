@@ -434,6 +434,16 @@ already exists from Phase 1 Step 0; this phase covers the integrated stack.
 
 ## Open questions / decisions to make
 
+- Unix CA-root discovery should probably try
+  `SSL_CTX_set_default_verify_paths()` first (the packaged OpenSSL's own
+  OPENSSLDIR plus `SSL_CERT_FILE`/`SSL_CERT_DIR` env overrides are
+  authoritative on distros), keeping the hardcoded path probes as the
+  fallback for static/custom OpenSSL builds; the probe list also lacks
+  OpenBSD/NetBSD (`/etc/ssl/cert.pem`), SUSE (`/etc/ssl/ca-bundle.pem`),
+  and Solaris (`/etc/certs/`).  Related: minimal container images
+  (Alpine/distroless without ca-certificates) legitimately have no bundle
+  -- which is why root loading is best-effort at init.
+
 - ALPN: send `dot` (registered ID)?  Required for DDR-discovered
   endpoints; harmless otherwise.  Probably yes, unconditionally.
 - Default when only `dns+tls://IP` given with no hostname: opportunistic
