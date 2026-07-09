@@ -623,27 +623,25 @@ TEST_F(LibraryTest, CryptoTLSInterpretEvents) {
   ares_free(out);
   out = NULL;
 
-  /* Unknown fd: dropped entirely */
+  /* Unknown fd only: no TLS connection involved, so no translation is
+   * performed (NULL output = events apply as-is, no allocation) */
   ev.fd     = h.sv_[1];
   ev.events = ARES_FD_EVENT_READ;
   n         = 1;
   ASSERT_EQ(ARES_SUCCESS,
             ares_conn_interpret_events(&out, h.channel_, &ev, &n));
-  EXPECT_EQ((size_t)0, n);
-  ares_free(out);
-  out = NULL;
+  EXPECT_EQ(nullptr, out);
+  EXPECT_EQ((size_t)1, n);
 
-  /* Non-TLS conn: events pass through untouched */
+  /* Non-TLS conn: same as-is contract, the hot path must not allocate */
   h.conn_.flags = ARES_CONN_FLAG_TCP;
   ev.fd         = h.conn_.fd;
   ev.events     = ARES_FD_EVENT_READ;
   n             = 1;
   ASSERT_EQ(ARES_SUCCESS,
             ares_conn_interpret_events(&out, h.channel_, &ev, &n));
-  ASSERT_EQ((size_t)1, n);
-  EXPECT_EQ((unsigned int)ARES_FD_EVENT_READ, out[0].events);
-  ares_free(out);
-  out = NULL;
+  EXPECT_EQ(nullptr, out);
+  EXPECT_EQ((size_t)1, n);
   h.conn_.flags =
     (ares_conn_flags_t)(ARES_CONN_FLAG_TCP | ARES_CONN_FLAG_TLS);
 

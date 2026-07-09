@@ -205,11 +205,16 @@ static ares_status_t ares_process_fds_nolock(ares_channel_t         *channel,
   }
 
   if (nevents != 0) {
+    /* Remap fd events through TLS want-state.  NULL output with success
+     * means no TLS connections are involved and the events apply as-is.
+     * On allocation failure fall back to the raw events too: a spurious
+     * read/write attempt on a TLS connection is harmless, a dropped event
+     * is not. */
     status = ares_conn_interpret_events(&evs, channel, events, &nevents);
-    if (status != ARES_SUCCESS) {
-      return status;
+    if (status == ARES_SUCCESS && evs != NULL) {
+      events = evs;
     }
-    events = evs;
+    status = ARES_SUCCESS;
   }
 
   ares_tvnow(&now);
