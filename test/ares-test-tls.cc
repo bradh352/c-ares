@@ -513,9 +513,9 @@ TEST_F(LibraryTest, CryptoTLSVerifyFail) {
    * the connection must not silently proceed (strict by default) */
   ASSERT_TRUE(h.Init(false));
 
-  ares_conn_err_t err = h.PumpHandshake();
-  EXPECT_NE(ARES_CONN_ERR_SUCCESS, err);
-  EXPECT_NE(ARES_CONN_ERR_WOULDBLOCK, err);
+  /* Certificate verification failures surface distinguishably from
+   * transport errors */
+  EXPECT_EQ(ARES_CONN_ERR_SECURITY, h.PumpHandshake());
   EXPECT_EQ(ARES_TLS_STATE_ERROR, ares_tlsimp_get_state(h.tls_));
 }
 
@@ -824,6 +824,63 @@ TEST_F(LibraryTest, CryptoTLSEarlyDataReject) {
   ASSERT_TRUE(h.ServerRead(sbuf, sizeof(sbuf), &sread));
   ASSERT_EQ(sizeof(q), sread);
   EXPECT_EQ(0, memcmp(q, sbuf, sread));
+}
+
+TEST_F(LibraryTest, CryptoTLSGracefulClose) {
+  TLSHarness h;
+  ASSERT_TRUE(h.Init(true));
+  EXPECT_EQ(ARES_CONN_ERR_SUCCESS, h.PumpHandshake());
+
+  /* Server closes cleanly (close_notify): normal for a DoT server
+   * dropping an idle connection -- must surface as a clean close, not an
+   * error */
+  SSL_shutdown(h.sssl_);
+
+  unsigned char buf[16];
+  size_t        blen = sizeof(buf);
+  EXPECT_EQ(ARES_CONN_ERR_CONNCLOSED, h.ClientRead(buf, &blen));
+  EXPECT_EQ(ARES_TLS_STATE_DISCONNECTED, ares_tlsimp_get_state(h.tls_));
+}
+
+TEST_F(LibraryTest, CryptoTLSReadPending) {
+  TLSHarness h;
+  ASSERT_TRUE(h.Init(true));
+  EXPECT_EQ(ARES_CONN_ERR_SUCCESS, h.PumpHandshake());
+
+  /* Read-ahead buffers whole TLS records inside OpenSSL: after a partial
+   * read the remainder is available with nothing left in the socket, and
+   * the pending indicator must say so */
+  unsigned char big[2000];
+  for (size_t i = 0; i < sizeof(big); i++) {
+    big[i] = (unsigned char)(i & 0xFF);
+  }
+  ASSERT_TRUE(h.ServerWrite(big, sizeof(big)));
+
+  unsigned char rbuf[100];
+  size_t        rlen  = sizeof(rbuf);
+  size_t        total = 0;
+  EXPECT_EQ(ARES_CONN_ERR_SUCCESS, h.ClientRead(rbuf, &rlen));
+  EXPECT_EQ(0, memcmp(big, rbuf, rlen));
+  total += rlen;
+
+  EXPECT_EQ(ARES_TRUE, ares_tlsimp_get_read_pending(h.tls_));
+
+  /* Drain the rest without any further server or socket activity */
+  int guard;
+  for (guard = 0; guard < 1000 && total < sizeof(big); guard++) {
+    size_t          want = sizeof(rbuf);
+    ares_conn_err_t err  = ares_tlsimp_read(h.tls_, rbuf, &want);
+    ASSERT_EQ(ARES_CONN_ERR_SUCCESS, err);
+    ASSERT_LE(want, sizeof(big) - total);
+    EXPECT_EQ(0, memcmp(big + total, rbuf, want));
+    total += want;
+  }
+  EXPECT_EQ(sizeof(big), total);
+
+  /* Fully drained: nothing pending, next read blocks */
+  EXPECT_EQ(ARES_FALSE, ares_tlsimp_get_read_pending(h.tls_));
+  rlen = sizeof(rbuf);
+  EXPECT_EQ(ARES_CONN_ERR_WOULDBLOCK, ares_tlsimp_read(h.tls_, rbuf, &rlen));
 }
 
 #endif /* CARES_TEST_TLS_HARNESS */

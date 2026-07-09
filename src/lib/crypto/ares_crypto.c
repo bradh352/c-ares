@@ -107,14 +107,12 @@ static char *ares_tls_session_key(ares_conn_t *conn)
     return NULL;
   }
 
-  /* Format:  hostname@[ip]:port */
-
-  /* TODO: implement me -- fetch hostname */
-  status = ares_buf_append_str(buf, "hostname");
-  if (status != ARES_SUCCESS) {
-    goto done;
-  }
-
+  /* Format:  hostname@[ip]:port
+   *
+   * The hostname component is the server's TLS authentication name.  No
+   * server-level TLS configuration exists yet so it is currently always
+   * blank; the '@' separator is kept so keys stay stable when the name
+   * is plumbed through. */
   status = ares_buf_append_str(buf, "@[");
   if (status != ARES_SUCCESS) {
     goto done;
@@ -140,6 +138,12 @@ static char *ares_tls_session_key(ares_conn_t *conn)
   }
 
 done:
+  if (status != ARES_SUCCESS) {
+    /* A partial key must never be returned: it could alias another
+     * server's sessions */
+    ares_buf_destroy(buf);
+    return NULL;
+  }
   return ares_buf_finish_str(buf, NULL);
 }
 

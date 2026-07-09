@@ -138,7 +138,7 @@ static ares_status_t ares_ossl_load_caroots(SSL_CTX *ctx, OSSL_LIB_CTX *libctx)
     return ARES_EFORMERR;
   }
 
-  hStore = CertOpenSystemStore(0, "ROOT");
+  hStore = CertOpenSystemStoreA(0, "ROOT");
   if (hStore == NULL) {
     return ARES_ESERVFAIL;
   }
@@ -146,9 +146,10 @@ static ares_status_t ares_ossl_load_caroots(SSL_CTX *ctx, OSSL_LIB_CTX *libctx)
   store = SSL_CTX_get_cert_store(ctx);
 
   while ((pContext = CertEnumCertificatesInStore(hStore, pContext)) != NULL) {
-    BYTE * const *cert = &pContext->pbCertEncoded;
-    X509 *x509 = d2i_X509(NULL, M_CAST_OFF_CONST(const unsigned char **, cert),
-                          (long)pContext->cbCertEncoded);
+    /* d2i_X509 advances the pointer it is given; use a local so the
+     * enumeration context isn't modified */
+    const unsigned char *der = pContext->pbCertEncoded;
+    X509 *x509 = d2i_X509(NULL, &der, (long)pContext->cbCertEncoded);
     if (x509) {
       if (X509_STORE_add_cert(store, x509)) {
         count++;
@@ -608,16 +609,12 @@ ares_conn_err_t ares_tlsimp_connect(ares_tls_t *tls)
   tls->flags &= ~((unsigned int)(ARES_TLS_SF_READ | ARES_TLS_SF_WRITE));
 
   rv = SSL_connect(tls->ssl);
-  if (rv == 0) {
-    tls->state = ARES_TLS_STATE_ERROR;
-    return ARES_CONN_ERR_CONNREFUSED;
-  }
-
   if (rv == 1) {
     tls->state = ARES_TLS_STATE_ESTABLISHED;
 
-    /* XXX: Get early data result SSL_write_early_data(), need to requeue
-     * early data if not already sent */
+    /* If early data was sent, the caller must now consult
+     * ares_tlsimp_earlydata_accepted() and re-send the flight through the
+     * normal write path if the server rejected it */
     return ARES_CONN_ERR_SUCCESS;
   }
 
@@ -635,6 +632,13 @@ ares_conn_err_t ares_tlsimp_connect(ares_tls_t *tls)
   }
 
   tls->state = ARES_TLS_STATE_ERROR;
+
+  /* Distinguish certificate verification failures from transport errors:
+   * strict-mode diagnosis is impossible if both surface identically */
+  if (SSL_get_verify_result(tls->ssl) != X509_V_OK) {
+    return ARES_CONN_ERR_SECURITY;
+  }
+
   if (tls->last_io_error == ARES_CONN_ERR_SUCCESS) {
     tls->last_io_error = ARES_CONN_ERR_CONNRESET;
   }
@@ -730,22 +734,12 @@ ares_conn_err_t ares_tlsimp_write(ares_tls_t *tls, const unsigned char *buf,
     return ARES_CONN_ERR_INVALID;
   }
 
-  if (tls->state == ARES_TLS_STATE_INIT) {
-    /* XXX: Write TLS Early Data here ... also this may return partial writes
-     * with needing to retry just like SSL_write_ex(), so we'll need to repeat.
-     * Also length should be capped at max of 1280 and the session early data
-     * size.
-     */
-
-    /* Implicit connect */
-    return ares_tlsimp_connect(tls);
-  }
-
-
   tls->flags &= ~((unsigned int)ARES_TLS_SF_WRITE);
 
-  /* XXX: Repeats of write should send same length!!!! */
-
+  /* On WOULDBLOCK the caller must retry with the same data: the buffer
+   * address may change (moving-write-buffer mode is enabled) but the
+   * contents and length of the unsent remainder must be re-presented
+   * as-is */
   rv = SSL_write_ex(tls->ssl, buf, *buf_len, buf_len);
   if (rv == 1) {
     return ARES_CONN_ERR_SUCCESS;
@@ -786,6 +780,12 @@ ares_conn_err_t ares_tlsimp_read(ares_tls_t *tls, unsigned char *buf,
   }
 
   err = SSL_get_error(tls->ssl, rv);
+  if (err == SSL_ERROR_ZERO_RETURN) {
+    /* Clean TLS-level close (close_notify): normal behavior for a DoT
+     * server closing an idle connection, not an error */
+    tls->state = ARES_TLS_STATE_DISCONNECTED;
+    return ARES_CONN_ERR_CONNCLOSED;
+  }
   if (err == SSL_ERROR_WANT_READ) {
     tls->flags |= ARES_TLS_SF_READ_WANTREAD;
     return ARES_CONN_ERR_WOULDBLOCK;
@@ -800,6 +800,18 @@ ares_conn_err_t ares_tlsimp_read(ares_tls_t *tls, unsigned char *buf,
     tls->last_io_error = ARES_CONN_ERR_CONNRESET;
   }
   return tls->last_io_error;
+}
+
+ares_bool_t ares_tlsimp_get_read_pending(ares_tls_t *tls)
+{
+  if (tls == NULL || tls->ssl == NULL) {
+    return ARES_FALSE;
+  }
+  /* Read-ahead mode is enabled, so decrypted data or complete TLS records
+   * can be buffered inside OpenSSL with nothing left in the socket: the
+   * caller must consult this and keep reading rather than wait on socket
+   * events when it returns true */
+  return SSL_has_pending(tls->ssl) ? ARES_TRUE : ARES_FALSE;
 }
 
 ares_bool_t ares_tlsimp_earlydata_accepted(ares_tls_t *tls)

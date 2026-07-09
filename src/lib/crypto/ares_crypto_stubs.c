@@ -85,6 +85,12 @@ ares_bool_t ares_tlsimp_earlydata_accepted(ares_tls_t *tls)
   return ARES_FALSE;
 }
 
+ares_bool_t ares_tlsimp_get_read_pending(ares_tls_t *tls)
+{
+  (void)tls;
+  return ARES_FALSE;
+}
+
 void ares_tlsimp_destroy(ares_tls_t *tls)
 {
   (void)tls;

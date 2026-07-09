@@ -82,11 +82,13 @@ deferred to its phase:
 - [x] **[pre-harness]** `ares_crypto_ctx_init()` never creates `sess_rev`, so
       `ares_tls_session_insert()` always fails at the reverse insert —
       session caching (and therefore resumption and early data) cannot work.
-- [ ] `ares_tls_session_key()`: hostname component is a `TODO` (literal
-      string `"hostname"`); on internal allocation failure it returns a
-      partial key instead of NULL (missing buf destroy + NULL return).
-- [ ] `ares_tls_session_insert()` leaks `key` when the early parameter
-      check returns `ARES_EFORMERR` (key is built before the check).
+- [x] `ares_tls_session_key()`: partial-key-on-allocation-failure fixed
+      (NULL returned; a partial key could alias another server's
+      sessions).  The misleading `"hostname"` literal is gone; the
+      component is blank until server-level TLS configuration provides an
+      authentication name (tracked by the Phase 1 config item).
+- [x] `ares_tls_session_insert()` leaked `key` when the early parameter
+      check returned `ARES_EFORMERR`.  Fixed.
 - [x] Session refcount audit: the cache's retained reference (from the new
       callback) was dropped via `ares_htable_strvp_claim()` on removal
       without an `SSL_SESSION_free()`, leaking a reference when a cached
@@ -106,10 +108,13 @@ deferred to its phase:
       `ARES_ENOMEM` but is missing `goto done`, falling through to
       `BIO_set_data(NULL, ...)`; also a `bio` leak if failure occurs before
       `SSL_set_bio()`.
-- [ ] `ares_tlsimp_write()`: the `state == INIT` implicit-connect /
-      early-data block is unreachable (guard above already rejects
-      `state != ESTABLISHED`); the early-data flow needs an explicit design
-      (see Phase 1) rather than being buried in write.
+- [x] `ares_tlsimp_write()`: the unreachable `state == INIT`
+      implicit-connect / early-data block is removed.  The early-data flow
+      is explicit: `ares_tlsimp_earlydata_write()` before/with
+      `ares_tlsimp_connect()`, then `ares_tlsimp_earlydata_accepted()`
+      decides requeue; write requires an established connection and
+      documents the same-data retry contract (pinned by the partial-write
+      test).
 - [x] `ares_tlsimp_connect()` did not set WANT_READ/WANT_WRITE state
       flags, but `ares_conn_interpret_events()` maps events for TLS
       connections *only* via those flags — fd events during the handshake
@@ -117,10 +122,12 @@ deferred to its phase:
       shutdown, and early-data write now publish want-flags (connect and
       shutdown publish both logical directions since handshake progress
       gates everything).
-- [ ] `SSL_CTX_set_read_ahead(1)` buffers TLS records inside OpenSSL:
-      decrypted data can be pending with no fd readable event.  The read
-      path must drain until WOULDBLOCK (and/or consult `SSL_pending()`)
-      before re-arming on fd events, or responses will sit unread.
+- [x] `SSL_CTX_set_read_ahead(1)` buffers TLS records inside OpenSSL:
+      decrypted data can be pending with no fd readable event.  Resolved
+      at the backend level with `ares_tlsimp_get_read_pending()`
+      (`SSL_has_pending()`) plus the documented drain contract, pinned by
+      the CryptoTLSReadPending test.  The Phase 1 I/O-routing item must
+      honor it in the process loop.
 - [x] **[pre-harness]** Debug `fprintf(stderr, ...)` calls left in
       `ares_cryptoimp_ctx_init()`.
 - [x] `SSL_CTX_set_security_level(3)` — decided: **level 2**.  The harness
@@ -141,14 +148,19 @@ deferred to its phase:
       evicting a session after an unclean close) would then tear down the
       *new* session's forward entry.  Fixed in
       `ares_tls_session_insert()`.
-- [ ] Windows: verify `CertOpenSystemStore(0, "ROOT")` compiles under
-      `UNICODE` builds (should be `CertOpenSystemStoreA` or a `TEXT()`
-      argument), and audit the const-cast on `pbCertEncoded`.
-- [ ] Error mapping: `SSL_connect() == 0` returns `CONNREFUSED`
-      unconditionally; certificate-verification failures should surface
-      distinguishably (at minimum a debug-obtainable verify result, e.g.
-      `SSL_get_verify_result()`), or diagnosing strict-mode failures will
-      be miserable.
+- [x] Windows cert-store loading could never have compiled: it used a
+      `M_CAST_OFF_CONST` macro that does not exist in this tree, and the
+      cast pattern let `d2i_X509` advance (mutate) the enumeration
+      context's `pbCertEncoded` field.  Rewritten with a local pointer and
+      `CertOpenSystemStoreA` (UNICODE-safe).  Compile verification needs
+      the Windows crypto CI leg.
+- [x] Error mapping reworked: certificate-verification failures return
+      the new `ARES_CONN_ERR_SECURITY` (via `SSL_get_verify_result()`,
+      pinned by the verify-fail test); a clean TLS close_notify maps to
+      `ARES_CONN_ERR_CONNCLOSED` + DISCONNECTED state instead of a generic
+      error (normal DoT server idle-close behavior, pinned by the
+      graceful-close test); the `SSL_connect() == 0` special case is
+      folded into the standard error path.
 
 ## Phase 1 — Complete the backend (connection integration)
 
@@ -440,6 +452,14 @@ already exists from Phase 1 Step 0; this phase covers the integrated stack.
 - 2026-07-08: branch squashed onto current main (`513601c3`); this
   document added.  State: building blocks only, feature inert; defect list
   and phased plan recorded above.
+- 2026-07-09: remaining backend defect list cleared (session-key
+  partial/placeholder, insert key leak, dead write block, read-ahead
+  pending accessor + drain contract, Windows cert-store rewrite --
+  including the discovery that it referenced a nonexistent macro and had
+  never compiled -- and the error-mapping rework adding
+  ARES_CONN_ERR_SECURITY and clean-close CONNCLOSED).  12/12 harness
+  tests green, normal + ASAN.  Windows compile validation awaits the
+  crypto CI leg.
 - 2026-07-09: Step 0 complete — remaining harness coverage landed
   (mid-handshake close, partial writes with stream-integrity check,
   session resumption, Early Data accept + reject/replay; 10/10 green,

@@ -130,6 +130,12 @@ size_t                  ares_tlsimp_get_earlydata_size(ares_tls_t *tls);
  *  reached the established state; on rejection the caller must re-send
  *  the data through the normal write path. */
 ares_bool_t ares_tlsimp_earlydata_accepted(ares_tls_t *tls);
+
+/*! Whether decrypted data or complete TLS records are buffered inside the
+ *  TLS backend, readable without the socket becoming readable again.  When
+ *  ARES_TRUE the caller must keep reading instead of waiting on socket
+ *  events. */
+ares_bool_t ares_tlsimp_get_read_pending(ares_tls_t *tls);
 void                    ares_tlsimp_destroy(ares_tls_t *tls);
 ares_conn_err_t         ares_tlsimp_earlydata_write(ares_tls_t          *tls,
                                                     const unsigned char *buf,
