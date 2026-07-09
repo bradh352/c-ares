@@ -802,6 +802,10 @@ if test "${CARES_CRYPTO}" = "yes" ; then
   if test "x$host_vendor" = "xapple" ; then
     CARES_CRYPTO_LDFLAGS="-framework CoreFoundation -framework Security"
   fi
+  dnl System certificate store enumeration (wincrypt)
+  if test "x$ac_cv_native_windows" = "xyes" ; then
+    CARES_CRYPTO_LIBS="${CARES_CRYPTO_LIBS} -lcrypt32"
+  fi
   AC_SUBST(CARES_CRYPTO_CPPFLAGS)
   AC_SUBST(CARES_CRYPTO_LIBS)
   AC_SUBST(CARES_CRYPTO_LDFLAGS)
