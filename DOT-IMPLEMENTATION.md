@@ -35,11 +35,18 @@ dependency added to default builds:
 
 ## Current state (what exists on this branch)
 
-The branch contains the **backend building blocks**; nothing activates them
-yet — no code path sets `ARES_CONN_FLAG_TLS` or attaches a TLS session to a
-connection, so the feature is inert even when compiled in.
+**DNS-over-TLS is functional end to end.** A `dns+tls://` server completes
+real queries (handshake, framed query/response, session resumption,
+connection reuse, SNI + certificate verification), validated across the
+full CI matrix.  The remaining work is the 0-RTT early-data / TFO
+optimization (Phase 1 tail) and the config-source / testing / docs items
+in Phases 2–3.
 
-Implemented:
+This section describes the original backend building blocks the branch
+started from; see the phase sections and the progress log for what has
+since been completed.
+
+Original building blocks:
 
 - Build-system plumbing for `CARES_CRYPTO` in CMake, autotools
   (pkg-config `openssl >= 3.0.0`), and the static makefiles; `CARES_USE_CRYPTO`
@@ -343,25 +350,28 @@ Recorded from analysis (2026-07-09) so the rationale isn't lost:
 (parsed by `parse_nameserver_uri()` via `ares_uri`, written back by
 `ares_get_server_addr_uri()`).  Extend with a TLS scheme:
 
-- [ ] Scheme **`dns+tls://`**, default port 853.  Proposed query keys:
+- [x] Scheme **`dns+tls://`**, default port 853.  Implemented query keys:
   - `hostname=<name>` — authentication name (SNI + certificate
     verification); presence implies strict mode.
-  - `verify=strict|opportunistic|none` — explicit profile override
-    (`none` = opportunistic without even attempting verification;
-    exact split TBD during implementation).
+  - `verify=strict|opportunistic` — explicit profile override
+    (opportunistic = encrypt without certificate verification; this is
+    the "none" intent, so no separate `none` value was added).
   - Example: `dns+tls://1.1.1.1?hostname=one.one.one.one`
   - IP is still the URI host (c-ares dials IPs, never resolves a resolver
-    name via itself); link-local `%iface` continues to work.
-- [ ] Round-trip: `ares_get_servers_csv()` emits `dns+tls://` for TLS
-      servers (existing `ares_server_use_uri()` logic extended).
-- [ ] Duplicate-server detection / server sort must treat
-      `(ip, port, tls, hostname)` as the identity, not just `(ip, port)`.
-- [ ] `adig -s dns+tls://...` works for free once CSV parsing does; add a
-      note to adig docs.
+    name via itself); link-local `%iface` continues to work.  Rejected up
+    front (`ARES_ENOTIMP`) when built without crypto.
+- [x] Round-trip: `ares_get_servers_csv()` emits `dns+tls://` for TLS
+      servers (`ares_server_use_uri()` extended), pinned by
+      TLSServerConfigCSV.
+- [x] Duplicate-server detection / server sort treats
+      `(ip, port, tls, verify, hostname)` as the identity
+      (`ares_server_tls_match` / `ares_sconfig_tls_match`).
+- [x] Decide public API surface beyond CSV: **none** required (options
+      struct untouched -> no ABI concern).  A channel-level
+      "opportunistic TLS for all servers" knob can come later.
+- [ ] `adig -s dns+tls://...` works for free via CSV parsing (untested
+      end-to-end against a live DoT server); add a note to adig docs.
 - [ ] Docs: `ares_set_servers_csv.3` scheme table; `FEATURES.md` entry.
-- [ ] Decide public API surface beyond CSV: none required initially
-      (options struct untouched -> no ABI concern).  A channel-level knob
-      for "opportunistic TLS for all servers" can come later.
 
 ### Host OS configuration
 
@@ -406,7 +416,9 @@ already exists from Phase 1 Step 0; this phase covers the integrated stack.
       Step 0 covers the mapping logic directly; this validates it embedded
       in `ares_process_fds()` across all event backends via the mock-TLS
       suite (per-backend timing differences are where remapping bugs
-      surface).
+      surface).  *Partial:* CryptoDoTQuery already runs a real query
+      through the process loop over a TLS connection on the default
+      (select) backend; the all-event-backend sweep remains.
 - [ ] **Mock DoT server**: extend the gmock test server with a TLS
       variant when built `CARES_CRYPTO=ON`, reusing the Step 0
       runtime-generated CA/server-cert plumbing, with a test hook to
@@ -414,7 +426,11 @@ already exists from Phase 1 Step 0; this phase covers the integrated stack.
       real `ares_query()` traffic: handshake, framed query/response,
       server-initiated close, mid-handshake close, handshake timeout,
       certificate mismatch in strict vs opportunistic mode, session
-      resumption on second connection.
+      resumption on second connection.  *Partial:* CryptoDoTQuery (real
+      query + connection reuse) and CryptoDoTVerifyFail (strict cert
+      mismatch, no plaintext fallback) exist via a threaded in-test DoT
+      server; the remaining sub-cases and a gmock-integrated variant
+      remain.
 - [ ] **Early data through the channel**: verify the second connection
       sends the first query as early data (observable via server-side
       `SSL_read_early_data()`), and the rejection path re-sends the query
@@ -468,9 +484,8 @@ already exists from Phase 1 Step 0; this phase covers the integrated stack.
 
 ## Progress log
 
-- 2026-07-08: branch squashed onto current main (`513601c3`); this
-  document added.  State: building blocks only, feature inert; defect list
-  and phased plan recorded above.
+Newest first.
+
 - 2026-07-09: Phase 1 CI green across the full matrix (only the Coveralls
   *upload* step fails -- fork PRs can't access the repo token; Build/Test/
   Generate-Coverage in that job pass).  Functional DoT is validated on
@@ -563,3 +578,6 @@ already exists from Phase 1 Step 0; this phase covers the integrated stack.
   separate session-cache/interpret_events unit tests (covered by the
   harness resumption tests and the Phase 3 full-stack tests respectively);
   live smoke check dropped.
+- 2026-07-08: branch squashed onto current main (`513601c3`); this
+  document added.  State: building blocks only, feature inert; defect list
+  and phased plan recorded above.
