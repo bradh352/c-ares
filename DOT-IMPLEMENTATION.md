@@ -471,6 +471,13 @@ already exists from Phase 1 Step 0; this phase covers the integrated stack.
 - 2026-07-08: branch squashed onto current main (`513601c3`); this
   document added.  State: building blocks only, feature inert; defect list
   and phased plan recorded above.
+- 2026-07-09: Phase 1 CI green across the full matrix (only the Coveralls
+  *upload* step fails -- fork PRs can't access the repo token; Build/Test/
+  Generate-Coverage in that job pass).  Functional DoT is validated on
+  Linux (Werror/ASAN/containers), macOS, the BSDs, Solaris, MSVC x64/x86
+  (with and without OpenSSL), and MSYS2 mingw/clang, both crypto and
+  no-crypto builds.  Phase 1 is the shippable milestone; 0-RTT early data
+  + TFO (below) is the remaining optimization.
 - 2026-07-09: Phase 1 CI shakeout.  Two real regressions caught and fixed
   (folded into the integration commit): (1) parse_nameserver_uri() never
   zeroed its output struct -- unlike parse_nameserver() -- so the new
