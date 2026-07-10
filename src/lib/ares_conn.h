@@ -83,6 +83,11 @@ struct ares_conn {
   ares_conn_flags_t       flags;
   ares_conn_state_flags_t state_flags;
   ares_tls_t             *tls;
+  /*! Bytes at the head of out_buf provisionally sent as TLSv1.3 early data
+   *  (0-RTT) during the handshake but not yet consumed: they remain
+   *  buffered until the handshake confirms acceptance, so a rejected 0-RTT
+   *  flight replays through the normal write path. */
+  size_t                  tls_earlydata_sent;
 
   /*! Outbound buffered data that is not yet sent.  Exists as one contiguous
    *  stream in TCP format (big endian 16bit length prefix followed by DNS

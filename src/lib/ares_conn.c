@@ -278,7 +278,10 @@ ares_conn_err_t ares_conn_read(ares_conn_t *conn, void *data, size_t len,
 ares_conn_err_t ares_conn_write(ares_conn_t *conn, const void *data, size_t len,
                                 size_t *written)
 {
-  ares_conn_err_t err;
+  ares_conn_err_t  err;
+  ares_tls_state_t state;
+  size_t           accepted = 0;
+  size_t           w;
 
   if (!(conn->flags & ARES_CONN_FLAG_TLS)) {
     return ares_conn_write_raw(conn, data, len, written);
@@ -286,17 +289,79 @@ ares_conn_err_t ares_conn_write(ares_conn_t *conn, const void *data, size_t len,
 
   *written = 0;
 
+  /* TLSv1.3 Early Data (0-RTT): while the handshake is still in progress and
+   * the resumed session advertises early-data capacity, feed the pending
+   * query into the early-data flight.  Bytes sent this way are tracked in
+   * conn->tls_earlydata_sent but NOT reported written until the handshake
+   * confirms acceptance below, so out_buf keeps them and a rejected flight
+   * replays.  DNS queries are idempotent, so 0-RTT replay is safe (same
+   * rationale as DoH over GET).
+   *
+   * A cache miss (no resumable session) reports an early-data size of 0, so
+   * this whole block is skipped and the connection does an ordinary 1-RTT
+   * handshake. */
+  state = ares_tlsimp_get_state(conn->tls);
+  if (state == ARES_TLS_STATE_INIT || state == ARES_TLS_STATE_EARLYDATA) {
+    size_t budget = ares_tlsimp_get_earlydata_size(conn->tls);
+    if (budget > conn->tls_earlydata_sent && len > conn->tls_earlydata_sent) {
+      size_t off = conn->tls_earlydata_sent;
+      size_t ew  = len - off;
+
+      if (ew > budget - off) {
+        ew = budget - off;
+      }
+
+      err = ares_tlsimp_earlydata_write(conn->tls,
+                                        (const unsigned char *)data + off, &ew);
+      if (err == ARES_CONN_ERR_SUCCESS) {
+        conn->tls_earlydata_sent += ew;
+      } else if (err == ARES_CONN_ERR_WOULDBLOCK) {
+        return ARES_CONN_ERR_WOULDBLOCK;
+      }
+      /* Any other early-data error (e.g. budget exhausted) just falls
+       * through to the normal handshake + write path. */
+    }
+  }
+
+  /* Drive the handshake to completion. */
   err = ares_conn_tls_pump(conn);
   if (err != ARES_CONN_ERR_SUCCESS) {
     return err;
   }
 
-  *written = len;
-  err      = ares_tlsimp_write(conn->tls, data, written);
-  if (err != ARES_CONN_ERR_SUCCESS) {
-    *written = 0;
+  /* Handshake established.  Reconcile any early data we sent: if the server
+   * accepted it, those leading out_buf bytes are delivered and only the
+   * remainder needs writing; if it rejected them, everything is re-sent
+   * through the normal write path. */
+  if (conn->tls_earlydata_sent > 0) {
+    if (ares_tlsimp_earlydata_accepted(conn->tls)) {
+      accepted = conn->tls_earlydata_sent;
+    }
+    conn->tls_earlydata_sent = 0;
   }
-  return err;
+
+  if (accepted >= len) {
+    *written = accepted;
+    return ARES_CONN_ERR_SUCCESS;
+  }
+
+  w = len - accepted;
+  err =
+    ares_tlsimp_write(conn->tls, (const unsigned char *)data + accepted, &w);
+  if (err != ARES_CONN_ERR_SUCCESS) {
+    /* If early data was delivered but the remainder blocked, report the
+     * delivered prefix so it is consumed and the rest retried from the
+     * correct offset. */
+    if (accepted > 0) {
+      *written = accepted;
+      return ARES_CONN_ERR_SUCCESS;
+    }
+    *written = 0;
+    return err;
+  }
+
+  *written = accepted + w;
+  return ARES_CONN_ERR_SUCCESS;
 }
 
 ares_status_t ares_conn_flush(ares_conn_t *conn)

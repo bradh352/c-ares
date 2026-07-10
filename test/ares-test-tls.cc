@@ -224,9 +224,8 @@ public:
         return false;
       }
       len = BIO_get_mem_data(bio, &pem);
-      ok  = ares_tls_set_cadata(channel_->crypto_ctx,
-                                (const unsigned char *)pem,
-                                (size_t)len) == ARES_SUCCESS;
+      ok = ares_tls_set_cadata(channel_->crypto_ctx, (const unsigned char *)pem,
+                               (size_t)len) == ARES_SUCCESS;
       BIO_free(bio);
       if (!ok) {
         return false;
@@ -257,12 +256,10 @@ public:
     memset(&conn_, 0, sizeof(conn_));
     conn_.server = &server_;
     conn_.fd     = sv_[0];
-    conn_.flags =
-      (ares_conn_flags_t)(ARES_CONN_FLAG_TCP | ARES_CONN_FLAG_TLS);
+    conn_.flags  = (ares_conn_flags_t)(ARES_CONN_FLAG_TCP | ARES_CONN_FLAG_TLS);
     conn_.state_flags = ARES_CONN_STATE_CONNECTED;
 
-    if (ares_tls_create(&tls_, channel_->crypto_ctx, &conn_) !=
-        ARES_SUCCESS) {
+    if (ares_tls_create(&tls_, channel_->crypto_ctx, &conn_) != ARES_SUCCESS) {
       return false;
     }
     conn_.tls = tls_;
@@ -354,8 +351,7 @@ public:
     }
     conn_.fd = sv_[0];
 
-    if (ares_tls_create(&tls_, channel_->crypto_ctx, &conn_) !=
-        ARES_SUCCESS) {
+    if (ares_tls_create(&tls_, channel_->crypto_ctx, &conn_) != ARES_SUCCESS) {
       return false;
     }
     conn_.tls = tls_;
@@ -372,8 +368,7 @@ public:
     for (i = 0; i < 100; i++) {
       if (ares_tlsimp_get_state(tls_) != ARES_TLS_STATE_ESTABLISHED) {
         cerr = ares_tlsimp_connect(tls_);
-        if (cerr != ARES_CONN_ERR_SUCCESS &&
-            cerr != ARES_CONN_ERR_WOULDBLOCK) {
+        if (cerr != ARES_CONN_ERR_SUCCESS && cerr != ARES_CONN_ERR_WOULDBLOCK) {
           return cerr;
         }
       }
@@ -478,8 +473,7 @@ public:
     for (i = 0; i < 200; i++) {
       if (ares_tlsimp_get_state(tls_) != ARES_TLS_STATE_ESTABLISHED) {
         ares_conn_err_t cerr = ares_tlsimp_connect(tls_);
-        if (cerr != ARES_CONN_ERR_SUCCESS &&
-            cerr != ARES_CONN_ERR_WOULDBLOCK) {
+        if (cerr != ARES_CONN_ERR_SUCCESS && cerr != ARES_CONN_ERR_WOULDBLOCK) {
           return cerr;
         }
       }
@@ -499,8 +493,7 @@ public:
           }
         }
       }
-      if (finish &&
-          ares_tlsimp_get_state(tls_) == ARES_TLS_STATE_ESTABLISHED) {
+      if (finish && ares_tlsimp_get_state(tls_) == ARES_TLS_STATE_ESTABLISHED) {
         return ARES_CONN_ERR_SUCCESS;
       }
     }
@@ -515,8 +508,8 @@ public:
     }
   }
 
-  ares_channel_t *channel_  = nullptr;
-  ares_tls_t     *tls_      = nullptr;
+  ares_channel_t *channel_ = nullptr;
+  ares_tls_t     *tls_     = nullptr;
   ares_server_t   server_;
   ares_conn_t     conn_;
   int             sv_[2]    = { -1, -1 };
@@ -530,7 +523,8 @@ public:
   X509           *srv_cert_ = nullptr;
 };
 
-TEST_F(LibraryTest, CryptoTLSHandshakeIO) {
+TEST_F(LibraryTest, CryptoTLSHandshakeIO)
+{
   TLSHarness h;
   ASSERT_TRUE(h.Init(true));
 
@@ -564,7 +558,8 @@ TEST_F(LibraryTest, CryptoTLSHandshakeIO) {
   EXPECT_EQ(ARES_TLS_STATE_DISCONNECTED, ares_tlsimp_get_state(h.tls_));
 }
 
-TEST_F(LibraryTest, CryptoTLSVerifyFail) {
+TEST_F(LibraryTest, CryptoTLSVerifyFail)
+{
   TLSHarness h;
   /* CA not trusted by the client: certificate verification must fail and
    * the connection must not silently proceed (strict by default) */
@@ -576,7 +571,8 @@ TEST_F(LibraryTest, CryptoTLSVerifyFail) {
   EXPECT_EQ(ARES_TLS_STATE_ERROR, ares_tlsimp_get_state(h.tls_));
 }
 
-TEST_F(LibraryTest, CryptoTLSWantFlags) {
+TEST_F(LibraryTest, CryptoTLSWantFlags)
+{
   TLSHarness h;
   ASSERT_TRUE(h.Init(true));
 
@@ -584,9 +580,9 @@ TEST_F(LibraryTest, CryptoTLSWantFlags) {
    * reply, so progressing requires a readable socket for either logical
    * operation */
   EXPECT_EQ(ARES_CONN_ERR_WOULDBLOCK, ares_tlsimp_connect(h.tls_));
-  EXPECT_EQ((unsigned int)(ARES_TLS_SF_READ_WANTREAD |
-                           ARES_TLS_SF_WRITE_WANTREAD),
-            (unsigned int)ares_tlsimp_get_stateflag(h.tls_));
+  EXPECT_EQ(
+    (unsigned int)(ARES_TLS_SF_READ_WANTREAD | ARES_TLS_SF_WRITE_WANTREAD),
+    (unsigned int)ares_tlsimp_get_stateflag(h.tls_));
 
   EXPECT_EQ(ARES_CONN_ERR_SUCCESS, h.PumpHandshake());
 
@@ -621,7 +617,8 @@ TEST_F(LibraryTest, CryptoTLSWantFlags) {
   }
 }
 
-TEST_F(LibraryTest, CryptoTLSPeerClose) {
+TEST_F(LibraryTest, CryptoTLSPeerClose)
+{
   TLSHarness h;
   ASSERT_TRUE(h.Init(true));
   EXPECT_EQ(ARES_CONN_ERR_SUCCESS, h.PumpHandshake());
@@ -630,21 +627,22 @@ TEST_F(LibraryTest, CryptoTLSPeerClose) {
    * not hang or claim success */
   h.CloseFd(1);
 
-  unsigned char buf[16];
-  size_t        blen = sizeof(buf);
-  ares_conn_err_t err = h.ClientRead(buf, &blen);
+  unsigned char   buf[16];
+  size_t          blen = sizeof(buf);
+  ares_conn_err_t err  = h.ClientRead(buf, &blen);
   EXPECT_NE(ARES_CONN_ERR_SUCCESS, err);
   EXPECT_NE(ARES_CONN_ERR_WOULDBLOCK, err);
   EXPECT_EQ(ARES_TLS_STATE_ERROR, ares_tlsimp_get_state(h.tls_));
 }
 
-TEST_F(LibraryTest, CryptoTLSInterpretEvents) {
+TEST_F(LibraryTest, CryptoTLSInterpretEvents)
+{
   TLSHarness h;
   ASSERT_TRUE(h.Init(true));
 
   /* Register the fake conn the same way the production register path does,
    * so ares_conn_from_fd() resolves it */
-  ares_llist_t      *l    = ares_llist_create(NULL);
+  ares_llist_t *l = ares_llist_create(NULL);
   ASSERT_NE(nullptr, l);
   ares_llist_node_t *node = ares_llist_insert_last(l, &h.conn_);
   ASSERT_NE(nullptr, node);
@@ -699,8 +697,7 @@ TEST_F(LibraryTest, CryptoTLSInterpretEvents) {
             ares_conn_interpret_events(&out, h.channel_, &ev, &n));
   EXPECT_EQ(nullptr, out);
   EXPECT_EQ((size_t)1, n);
-  h.conn_.flags =
-    (ares_conn_flags_t)(ARES_CONN_FLAG_TCP | ARES_CONN_FLAG_TLS);
+  h.conn_.flags = (ares_conn_flags_t)(ARES_CONN_FLAG_TCP | ARES_CONN_FLAG_TLS);
 
   /* Deregister before the channel is destroyed (ares_destroy() asserts the
    * table is empty) */
@@ -708,7 +705,8 @@ TEST_F(LibraryTest, CryptoTLSInterpretEvents) {
   ares_llist_destroy(l);
 }
 
-TEST_F(LibraryTest, CryptoTLSMidHandshakeClose) {
+TEST_F(LibraryTest, CryptoTLSMidHandshakeClose)
+{
   TLSHarness h;
   ASSERT_TRUE(h.Init(true));
 
@@ -726,7 +724,8 @@ TEST_F(LibraryTest, CryptoTLSMidHandshakeClose) {
   EXPECT_EQ(ARES_TLS_STATE_ERROR, ares_tlsimp_get_state(h.tls_));
 }
 
-TEST_F(LibraryTest, CryptoTLSPartialWrites) {
+TEST_F(LibraryTest, CryptoTLSPartialWrites)
+{
   TLSHarness h;
   ASSERT_TRUE(h.Init(true));
   EXPECT_EQ(ARES_CONN_ERR_SUCCESS, h.PumpHandshake());
@@ -764,8 +763,7 @@ TEST_F(LibraryTest, CryptoTLSPartialWrites) {
   }
   EXPECT_TRUE(blocked);
 
-  for (int guard = 0; guard < 1000 && received.size() < total_sent;
-       guard++) {
+  for (int guard = 0; guard < 1000 && received.size() < total_sent; guard++) {
     ASSERT_TRUE(h.DrainServer(&received));
   }
   ASSERT_EQ(total_sent, received.size());
@@ -774,7 +772,8 @@ TEST_F(LibraryTest, CryptoTLSPartialWrites) {
   }
 }
 
-TEST_F(LibraryTest, CryptoTLSSessionResumption) {
+TEST_F(LibraryTest, CryptoTLSSessionResumption)
+{
   TLSHarness h;
   ASSERT_TRUE(h.Init(true));
   EXPECT_EQ(ARES_CONN_ERR_SUCCESS, h.PumpHandshake());
@@ -802,7 +801,8 @@ TEST_F(LibraryTest, CryptoTLSSessionResumption) {
   EXPECT_NE(nullptr, ares_tls_session_get(h.channel_->crypto_ctx, &h.conn_));
 }
 
-TEST_F(LibraryTest, CryptoTLSEarlyDataAccept) {
+TEST_F(LibraryTest, CryptoTLSEarlyDataAccept)
+{
   TLSHarness h;
   ASSERT_TRUE(h.Init(true, 16384));
 
@@ -827,8 +827,7 @@ TEST_F(LibraryTest, CryptoTLSEarlyDataAccept) {
   ASSERT_TRUE(h.Reconnect(false));
   EXPECT_EQ((size_t)16384, ares_tlsimp_get_earlydata_size(h.tls_));
   ql = sizeof(q);
-  EXPECT_EQ(ARES_CONN_ERR_SUCCESS,
-            ares_tlsimp_earlydata_write(h.tls_, q, &ql));
+  EXPECT_EQ(ARES_CONN_ERR_SUCCESS, ares_tlsimp_earlydata_write(h.tls_, q, &ql));
   EXPECT_EQ(sizeof(q), ql);
 
   std::string early;
@@ -846,7 +845,8 @@ TEST_F(LibraryTest, CryptoTLSEarlyDataAccept) {
   EXPECT_EQ(0, memcmp(resp, rbuf, rlen));
 }
 
-TEST_F(LibraryTest, CryptoTLSEarlyDataReject) {
+TEST_F(LibraryTest, CryptoTLSEarlyDataReject)
+{
   TLSHarness h;
   ASSERT_TRUE(h.Init(true, 16384));
   EXPECT_EQ(ARES_CONN_ERR_SUCCESS, h.PumpHandshake());
@@ -862,8 +862,7 @@ TEST_F(LibraryTest, CryptoTLSEarlyDataReject) {
   ASSERT_TRUE(h.Reconnect(true, 16384));
   unsigned char q[] = { 0x00, 0x03, 'e', 'd', '!' };
   size_t        ql  = sizeof(q);
-  EXPECT_EQ(ARES_CONN_ERR_SUCCESS,
-            ares_tlsimp_earlydata_write(h.tls_, q, &ql));
+  EXPECT_EQ(ARES_CONN_ERR_SUCCESS, ares_tlsimp_earlydata_write(h.tls_, q, &ql));
 
   std::string early;
   EXPECT_EQ(ARES_CONN_ERR_SUCCESS, h.PumpEarlyHandshake(&early));
@@ -881,7 +880,8 @@ TEST_F(LibraryTest, CryptoTLSEarlyDataReject) {
   EXPECT_EQ(0, memcmp(q, sbuf, sread));
 }
 
-TEST_F(LibraryTest, CryptoTLSGracefulClose) {
+TEST_F(LibraryTest, CryptoTLSGracefulClose)
+{
   TLSHarness h;
   ASSERT_TRUE(h.Init(true));
   EXPECT_EQ(ARES_CONN_ERR_SUCCESS, h.PumpHandshake());
@@ -897,7 +897,8 @@ TEST_F(LibraryTest, CryptoTLSGracefulClose) {
   EXPECT_EQ(ARES_TLS_STATE_DISCONNECTED, ares_tlsimp_get_state(h.tls_));
 }
 
-TEST_F(LibraryTest, CryptoTLSReadPending) {
+TEST_F(LibraryTest, CryptoTLSReadPending)
+{
   TLSHarness h;
   ASSERT_TRUE(h.Init(true));
   EXPECT_EQ(ARES_CONN_ERR_SUCCESS, h.PumpHandshake());
@@ -953,10 +954,12 @@ public:
     }
   }
 
-  bool Start(X509 *cert, EVP_PKEY *key)
+  bool Start(X509 *cert, EVP_PKEY *key, unsigned int max_early = 0)
   {
     struct sockaddr_in sin;
     socklen_t          slen = sizeof(sin);
+
+    want_early_ = (max_early > 0);
 
     sctx_ = SSL_CTX_new(TLS_server_method());
     if (sctx_ == NULL) {
@@ -967,6 +970,12 @@ public:
       return false;
     }
     SSL_CTX_set_min_proto_version(sctx_, TLS1_2_VERSION);
+    if (want_early_) {
+      SSL_CTX_set_max_early_data(sctx_, max_early);
+      /* Deterministic 0-RTT acceptance for the test (single-use client
+       * sessions mean no real replay here) */
+      SSL_CTX_set_options(sctx_, SSL_OP_NO_ANTI_REPLAY);
+    }
 
     lfd_ = socket(AF_INET, SOCK_STREAM, 0);
     if (lfd_ < 0) {
@@ -1001,21 +1010,9 @@ public:
   unsigned short   port_ = 0;
   std::atomic<int> queries_{ 0 };
   std::atomic<int> accepts_{ 0 };
+  std::atomic<int> early_queries_{ 0 };
 
 private:
-  bool ReadFull(SSL *ssl, unsigned char *buf, size_t len)
-  {
-    size_t off = 0;
-    while (off < len) {
-      size_t rb = 0;
-      if (SSL_read_ex(ssl, buf + off, len - off, &rb) != 1) {
-        return false;
-      }
-      off += rb;
-    }
-    return true;
-  }
-
   bool WriteFull(SSL *ssl, const unsigned char *buf, size_t len)
   {
     size_t off = 0;
@@ -1086,6 +1083,84 @@ done:
     return ok;
   }
 
+  /* Handle one connection.  Reads the request stream (early data first when
+   * enabled, then post-handshake), extracts complete TCP-framed queries,
+   * answers each, and counts how many arrived entirely within the early-data
+   * region. */
+  void HandleConn(int cfd)
+  {
+    SSL *ssl = SSL_new(sctx_);
+    if (ssl == NULL || SSL_set_fd(ssl, cfd) != 1) {
+      if (ssl != NULL) {
+        SSL_free(ssl);
+      }
+      close(cfd);
+      return;
+    }
+
+    std::vector<unsigned char> buf;
+    size_t                     early_len = 0;
+
+    if (want_early_) {
+      for (;;) {
+        unsigned char eb[512];
+        size_t        n  = 0;
+        int           rv = SSL_read_early_data(ssl, eb, sizeof(eb), &n);
+        if (rv == SSL_READ_EARLY_DATA_SUCCESS) {
+          buf.insert(buf.end(), eb, eb + n);
+          early_len += n;
+        } else if (rv == SSL_READ_EARLY_DATA_FINISH) {
+          break; /* handshake complete */
+        } else {
+          SSL_free(ssl);
+          close(cfd);
+          return;
+        }
+      }
+    } else if (SSL_accept(ssl) != 1) {
+      SSL_free(ssl);
+      close(cfd);
+      return;
+    }
+
+    /* Handshake complete: extract and answer framed messages, reading more
+     * as needed */
+    size_t consumed = 0;
+    bool   ok       = true;
+    for (;;) {
+      while (buf.size() - consumed >= 2) {
+        unsigned short mlen =
+          (unsigned short)((buf[consumed] << 8) | buf[consumed + 1]);
+        if (buf.size() - consumed < (size_t)(2 + mlen)) {
+          break;
+        }
+        bool was_early = (consumed + 2 + (size_t)mlen) <= early_len;
+        if (!AnswerQuery(ssl, buf.data() + consumed + 2, mlen)) {
+          ok = false;
+          break;
+        }
+        if (was_early) {
+          early_queries_++;
+        }
+        consumed += 2 + (size_t)mlen;
+      }
+      if (!ok) {
+        break;
+      }
+
+      unsigned char rb[4096];
+      size_t        n = 0;
+      if (SSL_read_ex(ssl, rb, sizeof(rb), &n) != 1) {
+        break;
+      }
+      buf.insert(buf.end(), rb, rb + n);
+    }
+
+    SSL_shutdown(ssl);
+    SSL_free(ssl);
+    close(cfd);
+  }
+
   void Run()
   {
     for (;;) {
@@ -1094,37 +1169,13 @@ done:
         break;
       }
       accepts_++;
-
-      SSL *ssl = SSL_new(sctx_);
-      if (ssl != NULL && SSL_set_fd(ssl, cfd) == 1 && SSL_accept(ssl) == 1) {
-        for (;;) {
-          unsigned char              lenb[2];
-          unsigned short             mlen;
-          std::vector<unsigned char> q;
-
-          if (!ReadFull(ssl, lenb, 2)) {
-            break;
-          }
-          mlen = (unsigned short)((lenb[0] << 8) | lenb[1]);
-          q.resize(mlen);
-          if (!ReadFull(ssl, q.data(), mlen)) {
-            break;
-          }
-          if (!AnswerQuery(ssl, q.data(), q.size())) {
-            break;
-          }
-        }
-      }
-      if (ssl != NULL) {
-        SSL_shutdown(ssl);
-        SSL_free(ssl);
-      }
-      close(cfd);
+      HandleConn(cfd);
     }
   }
 
-  SSL_CTX    *sctx_ = nullptr;
-  int         lfd_  = -1;
+  bool        want_early_ = false;
+  SSL_CTX    *sctx_       = nullptr;
+  int         lfd_        = -1;
   std::thread thr_;
 };
 
@@ -1228,6 +1279,79 @@ TEST_F(LibraryTest, CryptoDoTVerifyFail)
   EXPECT_TRUE(result.done_);
   EXPECT_NE(ARES_SUCCESS, result.status_);
   EXPECT_EQ(0, srv.queries_.load());
+
+  ares_destroy(channel);
+  srv.Stop();
+  X509_free(srv_cert);
+  X509_free(ca_cert);
+  EVP_PKEY_free(srv_key);
+  EVP_PKEY_free(ca_key);
+}
+
+/* End-to-end TLSv1.3 Early Data (0-RTT): the first query establishes and
+ * caches a session; once that connection goes idle and closes, the next
+ * query opens a fresh connection that resumes the session and sends the
+ * query in the 0-RTT flight, which the server observes as early data. */
+TEST_F(LibraryTest, CryptoDoTEarlyData)
+{
+  EVP_PKEY *ca_key  = EVP_EC_gen("P-256");
+  EVP_PKEY *srv_key = EVP_EC_gen("P-256");
+  ASSERT_NE(nullptr, ca_key);
+  ASSERT_NE(nullptr, srv_key);
+  X509 *ca_cert = TlsTestMkCert(ca_key, ca_key, NULL, 1, true);
+  ASSERT_NE(nullptr, ca_cert);
+  X509 *srv_cert = TlsTestMkCert(srv_key, ca_key, ca_cert, 2, false);
+  ASSERT_NE(nullptr, srv_cert);
+
+  DoTTestServer srv;
+  ASSERT_TRUE(srv.Start(srv_cert, srv_key, 16384));
+
+  ares_channel_t *channel = nullptr;
+  /* No STAYOPEN: the idle connection between the two queries must close so
+   * the second query opens a fresh connection that resumes */
+  EXPECT_EQ(ARES_SUCCESS, ares_init(&channel));
+
+  {
+    BIO  *bio = BIO_new(BIO_s_mem());
+    char *pem = NULL;
+    long  len;
+    ASSERT_NE(nullptr, bio);
+    ASSERT_EQ(1, PEM_write_bio_X509(bio, ca_cert));
+    len = BIO_get_mem_data(bio, &pem);
+    ASSERT_EQ(ARES_SUCCESS,
+              ares_tls_set_cadata(channel->crypto_ctx,
+                                  (const unsigned char *)pem, (size_t)len));
+    BIO_free(bio);
+  }
+
+  char csv[128];
+  snprintf(csv, sizeof(csv), "dns+tls://127.0.0.1:%u?verify=strict",
+           (unsigned int)srv.port_);
+  EXPECT_EQ(ARES_SUCCESS, ares_set_servers_csv(channel, csv));
+
+  /* First query: full handshake, caches a resumable session with an
+   * early-data budget */
+  HostResult result1;
+  ares_gethostbyname(channel, "first.test", AF_INET, HostCallback, &result1);
+  ProcessWork(channel, NoExtraFDs, nullptr);
+  EXPECT_TRUE(result1.done_);
+  EXPECT_EQ(ARES_SUCCESS, result1.status_);
+  EXPECT_EQ(0, srv.early_queries_.load());
+
+  /* Second query: fresh connection, resumes, and rides 0-RTT */
+  HostResult result2;
+  ares_gethostbyname(channel, "second.test", AF_INET, HostCallback, &result2);
+  ProcessWork(channel, NoExtraFDs, nullptr);
+  EXPECT_TRUE(result2.done_);
+  EXPECT_EQ(ARES_SUCCESS, result2.status_);
+  ASSERT_EQ((size_t)1, result2.host_.addrs_.size());
+  EXPECT_EQ("1.2.3.4", result2.host_.addrs_[0]);
+
+  /* Two separate connections, the second carrying the query as early
+   * data, and no query lost or duplicated (2 answered total). */
+  EXPECT_EQ(2, srv.accepts_.load());
+  EXPECT_EQ(1, srv.early_queries_.load());
+  EXPECT_EQ(2, srv.queries_.load());
 
   ares_destroy(channel);
   srv.Stop();

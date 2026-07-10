@@ -279,22 +279,28 @@ across all event backends.
       `tls_hostname` so different auth names never share sessions; insert
       via the new-session callback and single-use consumption are covered
       by the resumption test.
-- [ ] **TLS v1.3 Early Data (0-RTT)**: on connection setup, if a cached
-      session reports `max_early_data > 0`, serialize the first pending
-      query (TCP length-prefixed) via `ares_tlsimp_earlydata_write()`
-      before/with the handshake, then complete the handshake; check
-      `SSL_get_early_data_status()` — on `SSL_EARLY_DATA_REJECTED` the
-      query must be re-sent through the normal write path (the buffered
-      outbound stream in `ares_conn_t.out_buf` makes replay natural).
-      Cap at the session's early-data limit.  **Security note**: 0-RTT data
-      is replayable; DNS queries are idempotent so this is acceptable
-      (same rationale as DoH GET), but must be documented, and early data
-      must never be enabled for future non-idempotent uses.
-- [ ] **TFO interplay**: when TCP Fast Open is available, the early-data
-      flight should ride the SYN payload (true 0-RTT to a warm resolver).
-      Verify the existing TFO plumbing (`ARES_CONN_FLAG_TFO*`) composes
-      with the TLS connect path on Linux/macOS, and degrades cleanly where
-      TFO is unavailable.
+- [x] **TLS v1.3 Early Data (0-RTT)**: implemented in `ares_conn_write()`.
+      While the handshake is in progress and the resumed session reports
+      early-data capacity, the pending query (the `out_buf` head the flush
+      loop peeks) is fed to `ares_tlsimp_earlydata_write()`, tracked in
+      `conn->tls_earlydata_sent` but NOT reported written -- so a rejected
+      flight stays buffered and replays.  On handshake completion,
+      `ares_tlsimp_earlydata_accepted()` reconciles: accepted bytes are
+      reported written (consumed), rejected ones fall through to the normal
+      write.  Capped at the session budget; a cache miss reports budget 0
+      and the block is skipped (ordinary 1-RTT handshake).  0-RTT replay is
+      safe because DNS queries are idempotent (documented in a code
+      comment; must never enable early data for a non-idempotent use).
+      Pinned by CryptoDoTEarlyData (server observes the 2nd query as early
+      data via `SSL_read_early_data`, no query lost/duplicated).
+- [ ] **TFO interplay**: TFO is currently *disabled* for TLS connections
+      (`ares_open_connection` only sets `ARES_CONN_FLAG_TFO` for non-TLS).
+      Composing it would let the early-data flight ride the SYN payload
+      (true 0-RTT including the TCP round trip).  Re-enable TFO for TLS and
+      verify the `ARES_CONN_FLAG_TFO*` / `TFO_INITIAL` sendto path composes
+      with the OpenSSL ClientHello+early-data write on Linux/macOS, and
+      degrades cleanly where TFO is unavailable.  Distinct optimization on
+      top of the (working) TLS-level 0-RTT; needs per-platform testing.
 - [x] **Shutdown & teardown**: best-effort `ares_tlsimp_shutdown()` on
       close of an established TLS connection (preserves the session for
       resumption), `ares_tlsimp_destroy()` in the cleanup path and the
@@ -431,11 +437,14 @@ already exists from Phase 1 Step 0; this phase covers the integrated stack.
       mismatch, no plaintext fallback) exist via a threaded in-test DoT
       server; the remaining sub-cases and a gmock-integrated variant
       remain.
-- [ ] **Early data through the channel**: verify the second connection
-      sends the first query as early data (observable via server-side
-      `SSL_read_early_data()`), and the rejection path re-sends the query
-      correctly — no lost or duplicated query, correct response
-      correlation.
+- [x] **Early data through the channel**: CryptoDoTEarlyData verifies the
+      second connection sends the query as early data (server-side
+      `SSL_read_early_data()` observes exactly one early query), the answer
+      is correct, and no query is lost or duplicated (2 accepts, 2 queries
+      total).  The rejection→replay contract is covered at the backend
+      level by CryptoTLSEarlyDataReject; a channel-level reject variant
+      (fresh server ticket keys) could be added but the backend test
+      already pins the no-loss/no-dup behavior.
 - [ ] **Event-loop integration**: run the mock-TLS suite under all event
       backends (epoll/kqueue/poll/select/IOCP configurations CI already
       exercises) — the want-flag remapping is exactly the kind of thing
@@ -486,6 +495,16 @@ already exists from Phase 1 Step 0; this phase covers the integrated stack.
 
 Newest first.
 
+- 2026-07-10: TLSv1.3 Early Data (0-RTT) integrated into the connection
+  layer.  `ares_conn_write()` feeds the pending query into the early-data
+  flight during the handshake when the resumed session has budget, tracks
+  it in `conn->tls_earlydata_sent` without consuming out_buf, and
+  reconciles on handshake completion (accepted -> consumed; rejected ->
+  replayed via the normal write).  New end-to-end CryptoDoTEarlyData test
+  (query 1 caches a session + connection closes; query 2 resumes and rides
+  0-RTT, server observes it via SSL_read_early_data) -- deterministic
+  15/15, ASAN clean, no regression to the 358 non-TLS mock tests.  TFO
+  composition (SYN-ride) remains as a distinct follow-on.
 - 2026-07-09: Phase 1 CI green across the full matrix (only the Coveralls
   *upload* step fails -- fork PRs can't access the repo token; Build/Test/
   Generate-Coverage in that job pass).  Functional DoT is validated on
