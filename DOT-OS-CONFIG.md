@@ -184,8 +184,72 @@ research pass; claims are cited inline, uncertainties flagged.
   dnsinfo; at best its plaintext `ServerAddresses` surface as ordinary IPs,
   which c-ares would then query as **plaintext** — silently defeating
   intent. **On macOS, rely on explicit application configuration.**
-  (Confidence high on the dnsinfo/scutil dead-end; medium on the exact
-  profile on-disk path.)
+- **Verified against Apple's live source + a live test (2026-07-11, macOS
+  26.5.1).**
+  - *Header (definitive):* the current `dnsinfo.h`
+    (`apple-oss-distributions/configd` main, `DNSINFO_VERSION 20170629`)
+    has **no** TLS/ServerName/DoH/URL/encrypted field.  The struct is
+    actively maintained (recently gained `service_identifier`, `cid`,
+    `if_name`; `dns_config_t` gained `generation`,
+    `service_specific_resolver`, `version`) — so the omission of encrypted
+    DNS is deliberate, not staleness.  `dns_configuration_copy()` (what
+    `ares_sysconfig_mac.c` calls) therefore cannot carry DoT config.
+  - *Architecture:* macOS routes all DNS through `mDNSResponder` via mach
+    IPC, which terminates DoT/DoH **internally** — there is **no loopback
+    DNS proxy** (confirmed: nothing listens on `127.0.0.1:53/853`,
+    `mDNSResponder` has zero LISTEN sockets).  So no `dnsmasq`-style local
+    resolver to read, either.
+  - *Live test (partially contaminated — see caveat):* with a DoT profile
+    installed (`DNSProtocol=TLS`, `ServerName=one.one.one.one`,
+    `ServerAddresses=1.1.1.1`), the readable layers showed nothing usable:
+    `dns_configuration_copy()` exposed either no DoT entry or only a
+    `domain=placeholder-NNNNN.hostname.internal port=1 ns=127.0.0.1`
+    sentinel; `scutil --dns` nothing encrypted;
+    `State:/Network/PrivateDNS` empty; the configured `1.1.1.1` /
+    `one.one.one.one` never appeared.
+    **Caveat: the test machine's DNS was owned by a GlobalProtect VPN**
+    (`State:/Network/Global/DNS __CONFIGURATION_ID__ = gpd.pan`), which
+    overrides/suppresses the DoT profile — so the *behavioral* result
+    (especially "SCDynamicStore stayed empty") is **inconclusive**; it may
+    reflect the VPN winning rather than macOS hiding.  A clean non-VPN Mac
+    is needed to know whether `State:/Network/PrivateDNS` ever populates
+    with the real resolver.
+  **What is settled vs. open:**
+  - **Settled (VPN-independent):** the `dnsinfo` path c-ares uses today has
+    no field for a DoT `ServerName` / encrypted transport, so it cannot
+    carry DoT config on any macOS.  The mDNSResponder-IPC architecture (no
+    loopback proxy) means there's no local resolver to read instead.
+  - **Open:** whether SCDynamicStore (`State:/Network/PrivateDNS`, which
+    c-ares does *not* currently use, and which c-ares' own code history
+    notes gave "incomplete DNS information") exposes the active DoT
+    resolver on a clean machine.  Unresolved here due to the VPN; matters
+    only if we'd invest in a new SCDynamicStore-based reader, which is
+    speculative — not a priority.
+  **Net for the plan:** c-ares' existing macOS path can't read DoT config;
+  the only documented API with the details is the entitlement-gated
+  `NEDNSSettingsManager`.  **Rely on explicit application configuration on
+  Apple platforms** unless a future clean-machine test proves SCDynamicStore
+  viable.
+- **Empirically verified (2026-07-11, macOS, live test).** Installed a DoT
+  config profile (`DNSProtocol=TLS`, `ServerName=one.one.one.one`,
+  `ServerAddresses=1.1.1.1,1.0.0.1`) and probed every readable layer:
+  - `dns_configuration_copy()` (what `ares_sysconfig_mac.c` calls) returns
+    the DoT profile as a **placeholder resolver only**:
+    `domain=placeholder-NNNNN.hostname.internal port=1 flags=0x4006
+    nns=1 ns=127.0.0.1`.  The real server (`1.1.1.1`) and `ServerName`
+    (`one.one.one.one`) are **absent**; `flags` gains a private `0x4000`
+    bit but carries no server/name/TLS detail.
+  - `scutil --dns` (front-end over the same data): shows nothing encrypted.
+  - `State:/Network/PrivateDNS` (SCDynamicStore): **stays empty**; the
+    profile's `State:/Network/Service/<uuid>/DNS` entry likewise holds only
+    `ServerAddresses=127.0.0.1`, `DomainName=placeholder-...`.
+  Conclusion is now hard evidence, not inference: macOS **deliberately
+  hides** the encrypted resolver behind a `127.0.0.1` placeholder in every
+  public/SPI surface a library can read.  The only source of truth is the
+  entitlement-gated `NEDNSSettingsManager`.  A library reading dnsinfo
+  would either miss DoT entirely or (worse) query the unrelated plaintext
+  servers.  **Definitively: rely on explicit application configuration on
+  Apple platforms.**
 - **Sources.** dnsinfo headers (apple-oss-distributions/configd + in-tree);
   WWDC20 10047; `com.apple.dnsSettings.managed` payload;
   `NEDNSOverTLSSettings`; NetworkExtension entitlement docs.
