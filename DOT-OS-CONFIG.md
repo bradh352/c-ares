@@ -32,7 +32,7 @@ research pass; claims are cited inline, uncertainties flagged.
 | **Linux/BSD — unbound / stubby** | **Yes** (local forwarder) | file only, perms vary | Yes (`@853#name`, `tls_auth_name`) | Non-standard app-specific formats. |
 | **/etc/resolv.conf** | **No concept** | file | **No** — structurally impossible | Bare IP; no port/SNI/TLS field. |
 | **Windows 11 / Server** | **DoH yes; DoT now yes** | DoH via API or registry; **DoT registry-only** | DoT: **yes** (`dothost`), API doesn't expose it | Registry read unprivileged. DoT registry schema undocumented. |
-| **macOS** | **Yes** (DoH+DoT since Big Sur) | **No** via `dnsinfo`/`scutil`; only NetworkExtension (entitlement) | Yes but only via NE / profile | c-ares' current dnsinfo path is a dead end for encrypted DNS. |
+| **macOS** | **Yes** (DoH+DoT since Big Sur) | **No** (empirically confirmed: only a `127.0.0.1` placeholder in dnsinfo/scutil/SCDynamicStore; real config only via entitlement-gated NE) | Only via NE / profile | Verified on macOS 26.5.1, VPN off. |
 | **iOS / iPadOS** | **Yes** (same as macOS) | **No** (entitlement-gated) | Yes but unreadable by a generic lib | More locked down than macOS. |
 | **ChromeOS** | **DoH-only** | **No** (Chrome-internal) | N/A | Resolve through the system resolver. |
 | **FreeBSD/OpenBSD/NetBSD (base)** | **No native**; local forwarder only | file (forwarder config) | Yes (forwarder config) | `local_unbound`, `unwind`, pkgsrc unbound. |
@@ -207,29 +207,26 @@ research pass; claims are cited inline, uncertainties flagged.
     sentinel; `scutil --dns` nothing encrypted;
     `State:/Network/PrivateDNS` empty; the configured `1.1.1.1` /
     `one.one.one.one` never appeared.
-    **Caveat: the test machine's DNS was owned by a GlobalProtect VPN**
-    (`State:/Network/Global/DNS __CONFIGURATION_ID__ = gpd.pan`), which
-    overrides/suppresses the DoT profile — so the *behavioral* result
-    (especially "SCDynamicStore stayed empty") is **inconclusive**; it may
-    reflect the VPN winning rather than macOS hiding.  A clean non-VPN Mac
-    is needed to know whether `State:/Network/PrivateDNS` ever populates
-    with the real resolver.
-  **What is settled vs. open:**
-  - **Settled (VPN-independent):** the `dnsinfo` path c-ares uses today has
-    no field for a DoT `ServerName` / encrypted transport, so it cannot
-    carry DoT config on any macOS.  The mDNSResponder-IPC architecture (no
-    loopback proxy) means there's no local resolver to read instead.
-  - **Open:** whether SCDynamicStore (`State:/Network/PrivateDNS`, which
-    c-ares does *not* currently use, and which c-ares' own code history
-    notes gave "incomplete DNS information") exposes the active DoT
-    resolver on a clean machine.  Unresolved here due to the VPN; matters
-    only if we'd invest in a new SCDynamicStore-based reader, which is
-    speculative — not a priority.
-  **Net for the plan:** c-ares' existing macOS path can't read DoT config;
-  the only documented API with the details is the entitlement-gated
-  `NEDNSSettingsManager`.  **Rely on explicit application configuration on
-  Apple platforms** unless a future clean-machine test proves SCDynamicStore
-  viable.
+    The test was then **repeated on a clean machine with the VPN
+    disconnected** (DNS owned by the real `en0` service, not the VPN), DoT
+    profile installed and active: identical result — the DoT service key
+    (`State:/Network/Service/<uuid>/DNS`) held only
+    `DomainName=placeholder-NNNNN.hostname.internal`,
+    `ServerAddresses=127.0.0.1`, `ServerPort=1`; `dnsinfo` showed the same
+    `127.0.0.1:1` placeholder; `State:/Network/PrivateDNS` stayed empty; and
+    a brute-force scan of **every** SCDynamicStore key for the configured
+    server / name / `DNSProtocol` / `TLS` / `853` found nothing.  The VPN
+    confound is eliminated — the behavior is the same clean.
+  **Settled:** on current macOS the active DoT config is exposed only as a
+  `127.0.0.1` placeholder in every surface a C library can read
+  (`dnsinfo`, `scutil --dns`, SCDynamicStore incl. `State:/Network/PrivateDNS`
+  and per-service DNS keys).  The real resolver IP and `ServerName` live
+  solely inside `mDNSResponder`, reachable only via the entitlement-gated
+  `NEDNSSettingsManager`.  There is **no** readable path (dnsinfo has no
+  field; no loopback proxy; SCDynamicStore only shows the placeholder).
+  **Net for the plan: rely on explicit application configuration on Apple
+  platforms.**  (Only the entitlement-gated NE API could ever read it, and
+  it centers on the app's own config, not a system query.)
 - **Empirically verified (2026-07-11, macOS, live test).** Installed a DoT
   config profile (`DNSProtocol=TLS`, `ServerName=one.one.one.one`,
   `ServerAddresses=1.1.1.1,1.0.0.1`) and probed every readable layer:
