@@ -605,40 +605,77 @@ Windows) if/when someone takes the TLS 1.3 + 0-RTT investigation.
 ## OS DoT configuration sources
 
 Reading DoT configuration from the host OS the way c-ares already reads
-plaintext DNS config.  This is a research item in its own right — which
-operating systems expose DoT in their system resolver, how that config is
-stored, and whether a library can read it — captured in a dedicated
-document:
+plaintext DNS config.  The research is **complete** — full platform matrix,
+exact interfaces, permissions, and sources in
+[`DOT-OS-CONFIG.md`](DOT-OS-CONFIG.md).  Key findings and the resulting
+implementation priority:
 
-- [ ] **Research: OS DoT config landscape** — see
-      [`DOT-OS-CONFIG.md`](DOT-OS-CONFIG.md) (platform-by-platform:
-      supported?, where stored, readable-by-library?, fields available,
-      gotchas, sources).  Drives which sources are worth implementing and
-      in what order.
+**Tier 1 — worth reading (clean, unprivileged interfaces):**
 
-Known targets (details/decisions deferred to the research doc):
+- [ ] **Linux / systemd-resolved** — the single best target.  Read
+      resolved's real config directly (bypassing the 127.0.0.53 stub, as
+      intended) via **Varlink `io.systemd.Resolve.DumpDNSConfiguration`**
+      (systemd ≥ 259) with fallback to the **`org.freedesktop.resolve1`
+      D-Bus** `DNSEx`/`CurrentDNSServerEx`/`DNSOverTLS` properties (≥ 239).
+      Unprivileged; exposes per-server SNI, port, mode, and per-link /
+      per-domain scoping (the latter also unlocks #642).  Also covers
+      NetworkManager systems (NM pushes into resolved; its own keyfiles are
+      root-only `0600` and not worth reading).
+- [ ] **Android** Private DNS — minimal extension of the existing
+      ConnectivityManager JNI: `isPrivateDnsActive()` +
+      `getPrivateDnsServerName()` (API 28+, resolved **optionally** so
+      pre-28 init still works).  Strict mode gives a hostname (bootstrap
+      to IPs over the plaintext servers); opportunistic gives a boolean.
 
-- [ ] **Android** Private DNS (LinkProperties private-DNS name/active, via
-      the existing JNI/ConnectivityManager path).
-- [ ] **Linux / systemd-resolved** — read resolved's real config /
-      upstreams directly rather than trusting the 127.0.0.53 stub (the
-      maintainer's stated preference); this also unlocks per-domain
-      servers (#642), which `/etc/resolv.conf` cannot express.
-- [ ] **macOS / iOS** — encrypted-DNS via profiles / `NEDNSSettingsManager`;
-      determine whether the `dnsinfo` snapshot or `scutil --dns` exposes
-      it to an unprivileged library.
-- [ ] **Windows** — believed DoH-only at the OS level (no native DoT);
-      confirm in the research doc.  Reading DoH config becomes relevant
-      only with a future DoH transport.
-- [ ] **DDR (RFC 9462)** SVCB-based auto-upgrade and **DNR (RFC 9463)**
-      DHCP/RA-advertised encrypted resolvers — the cross-platform,
-      standards-track answer when the OS only supplies a plaintext IP.
-      c-ares already parses SVCB/HTTPS RRs.  Needs an explicit opt-in.
+**Tier 2 — readable but caveated:**
+
+- [ ] **Windows** — correction: **Windows now has a native DoT client**
+      (not DoH-only).  DoH is fully readable (registry or
+      `DNS_INTERFACE_SETTINGS3` API), but **DoT is registry-only and its
+      schema is undocumented** — best-effort empirical read under
+      `…\Dnscache\InterfaceSpecificParameters\{GUID}\DohInterfaceSettings\`.
+- [ ] **Local forwarders** (unbound / stubby / unwind / local_unbound) when
+      c-ares runs on the same host — parse the forwarder's own config
+      (`forward.conf`, `unwind.conf`, `stubby.yml`).  Non-standard,
+      app-specific, best-effort.
+
+**Blocked — rely on explicit app config or DDR:**
+
+- **macOS / iOS** — correction: the `dnsinfo` snapshot c-ares reads today
+  **does not expose encrypted DNS at all** (no DoH/DoT field in any
+  version); `scutil --dns` can't either.  The only API with the details is
+  the entitlement-gated `NEDNSSettingsManager`.  A profile-installed DoT
+  resolver's plaintext IPs may even surface via dnsinfo and get queried in
+  the clear, silently defeating intent.  On Apple platforms, rely on
+  explicit application configuration.
+- **ChromeOS** — DoH-only and unreadable by a sandboxed library.
+
+**Cross-platform fallback (highest-value auto-config):**
+
+- [ ] **DDR (RFC 9462)** — self-contained SVCB-based auto-upgrade from a
+      plaintext resolver IP: SVCB query to `_dns.resolver.arpa`, then
+      **require the original resolver IP in the cert `iPAddress` SAN**
+      (Verified Discovery).  c-ares already parses SVCB.  Needs an opt-in.
+      **DNR (RFC 9463)** is network-pushed via DHCP/RA and not directly
+      consumable by a resolver library — rely on the OS (systemd-resolved
+      fed by networkd ≥ 257) to translate it into a DoT server c-ares then
+      reads via Tier 1.
 
 ## Progress log
 
 Newest first.
 
+- 2026-07-11: OS DoT config research completed and written to
+  DOT-OS-CONFIG.md (platform matrix, exact interfaces, permissions,
+  sources).  Two plan assumptions corrected: Windows now has a native DoT
+  client (registry-only, undocumented schema), and Apple dnsinfo/scutil --
+  what c-ares reads today -- exposes no encrypted-DNS info at all (only
+  the entitlement-gated NEDNSSettingsManager does).  Resulting priority:
+  Tier 1 = systemd-resolved (Varlink/D-Bus, exposes SNI/port/mode/scope)
+  and Android Private DNS; Tier 2 = Windows registry + local forwarders;
+  blocked = macOS/iOS/ChromeOS (rely on explicit config); DDR (RFC 9462)
+  as the self-contained cross-platform fallback.  Plan OS section updated
+  to match.
 - 2026-07-11: plan expanded to full scope after reviewing issue #818
   intent.  Added first-class sections for server security grouping
   (decided policy: strict tier + opt-in ARES_FLAG_DNS_ALLOW_DOWNGRADE,
