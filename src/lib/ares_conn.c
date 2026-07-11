@@ -523,9 +523,12 @@ ares_status_t ares_open_connection(ares_conn_t   **conn_out,
 
   /* Try to enable TFO always if using TCP. it will fail later on if its
    * really not supported when we try to enable it on the socket.
-   * TLS connections don't use TFO yet: composing it with the handshake
-   * (and eventually 0-RTT early data) is future work. */
-  if (conn->flags & ARES_CONN_FLAG_TCP && !(conn->flags & ARES_CONN_FLAG_TLS)) {
+   * For TLS this composes with the handshake: the first BIO write (the
+   * ClientHello, carrying 0-RTT early data when a session is resumed)
+   * rides the SYN via the same ares_conn_write_raw() TFO_INITIAL path,
+   * giving true 0-RTT including the TCP round trip.  Falls back to an
+   * ordinary connect where TFO is unavailable. */
+  if (conn->flags & ARES_CONN_FLAG_TCP) {
     conn->flags |= ARES_CONN_FLAG_TFO;
   }
 

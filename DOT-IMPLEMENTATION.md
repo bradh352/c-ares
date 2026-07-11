@@ -293,14 +293,19 @@ across all event backends.
       comment; must never enable early data for a non-idempotent use).
       Pinned by CryptoDoTEarlyData (server observes the 2nd query as early
       data via `SSL_read_early_data`, no query lost/duplicated).
-- [ ] **TFO interplay**: TFO is currently *disabled* for TLS connections
-      (`ares_open_connection` only sets `ARES_CONN_FLAG_TFO` for non-TLS).
-      Composing it would let the early-data flight ride the SYN payload
-      (true 0-RTT including the TCP round trip).  Re-enable TFO for TLS and
-      verify the `ARES_CONN_FLAG_TFO*` / `TFO_INITIAL` sendto path composes
-      with the OpenSSL ClientHello+early-data write on Linux/macOS, and
-      degrades cleanly where TFO is unavailable.  Distinct optimization on
-      top of the (working) TLS-level 0-RTT; needs per-platform testing.
+- [x] **TFO interplay**: TFO is now enabled for TLS connections too
+      (`ares_open_connection` sets `ARES_CONN_FLAG_TFO` for all TCP).  The
+      composition is automatic: the TLS BIO's writes go through
+      `ares_conn_write_raw()`, so the first write -- OpenSSL's ClientHello,
+      carrying 0-RTT early data on a resumed session -- rides the SYN via
+      the existing `TFO_INITIAL` sendto path (`MSG_FASTOPEN` on Linux,
+      `connectx` on macOS), giving true 0-RTT including the TCP round trip.
+      Falls back to an ordinary connect where TFO is unavailable.  The
+      `ares_conn_query_write` flush-immediately-on-`TFO_INITIAL` guard
+      already triggers the send without waiting for TCP connect.  Verified:
+      DoT + early-data tests deterministic with TFO active (macOS connectx
+      loopback), ASAN clean, no change to the non-TLS TCP path; CI
+      exercises real TFO on Linux (`tcp_fastopen=3`).
 - [x] **Shutdown & teardown**: best-effort `ares_tlsimp_shutdown()` on
       close of an established TLS connection (preserves the session for
       resumption), `ares_tlsimp_destroy()` in the cleanup path and the
@@ -495,6 +500,14 @@ already exists from Phase 1 Step 0; this phase covers the integrated stack.
 
 Newest first.
 
+- 2026-07-11: TFO composition landed.  TFO is enabled for TLS connections
+  too, so OpenSSL's ClientHello (with 0-RTT early data on a resumed
+  session) rides the SYN via the existing TFO_INITIAL sendto path -- true
+  0-RTT including the TCP round trip, degrading cleanly where TFO is
+  unavailable.  One-condition change in ares_open_connection; the BIO ->
+  ares_conn_write_raw path and the flush-on-TFO_INITIAL guard make it
+  automatic.  DoT/early-data tests deterministic with TFO active, ASAN
+  clean, non-TLS TCP unchanged.  Task #5 (Early Data + TFO) complete.
 - 2026-07-10: TLSv1.3 Early Data (0-RTT) integrated into the connection
   layer.  `ares_conn_write()` feeds the pending query into the early-data
   flight during the handshake when the resumed session has budget, tracks
