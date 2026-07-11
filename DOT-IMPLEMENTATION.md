@@ -33,14 +33,48 @@ dependency added to default builds:
   by default.  Without it, stubs (`ares_crypto_stubs.c`) compile in and all
   TLS operations report `ARES_ENOTIMP`/`ARES_CONN_ERR_NOTIMP`.
 
+## Scope overview
+
+The full feature, so the plan visibly covers everything (details in the
+sections below).  This is intent-level scope, not a rigid phase order.
+
+**Done and CI-validated:**
+- Crypto abstraction layer + OpenSSL >= 3 backend (handshake, verification,
+  session resumption).
+- Functional DoT end to end: `dns+tls://` server config, TLS on the
+  connection, SNI + strict/opportunistic verification.
+- Performance: TLS 1.3 Early Data (0-RTT) + TCP Fast Open — warm queries
+  cost no extra round trips.
+- Crypto CI legs (Linux/ASAN, MSVC+OpenSSL, MSYS2).
+
+**Remaining scope:**
+- **Server security grouping** — secure servers preferred; no silent
+  downgrade to plaintext (strict tier + opt-in fallback flag).  Security
+  requirement, not a nicety.
+- **Bootstrap resolution** — resolve resolver IP<->hostname over insecure
+  servers *only* to enable a secure connection, never to answer user
+  queries.
+- **Configuration flexibility** — custom CA cert, client certs (mTLS),
+  hostname-validation modes.
+- **OS DoT config sources** — read the host OS's DoT configuration
+  (Android Private DNS, systemd-resolved read directly, macOS/iOS, …); a
+  research item tracked in `DOT-OS-CONFIG.md`.  Includes DDR (RFC 9462) /
+  DNR (RFC 9463) standards-track auto-discovery.
+- **Additional crypto backends** — Schannel (dependency-free Windows) and
+  others; abstraction already exists.
+- **Testing & docs** — full-stack mock DoT suite, all event backends, live
+  tests, macOS crypto CI leg, man-page / `FEATURES.md` entries.
+- **Overlaps** — #642 domain-specific servers shares the server-grouping
+  machinery; #882 URI schemes are the config representation.
+
 ## Current state (what exists on this branch)
 
-**DNS-over-TLS is functional end to end.** A `dns+tls://` server completes
-real queries (handshake, framed query/response, session resumption,
-connection reuse, SNI + certificate verification), validated across the
-full CI matrix.  The remaining work is the 0-RTT early-data / TFO
-optimization (Phase 1 tail) and the config-source / testing / docs items
-in Phases 2–3.
+**DNS-over-TLS is functional and performant end to end.** A `dns+tls://`
+server completes real queries (handshake, framed query/response, session
+resumption, connection reuse, SNI + certificate verification) with TLS 1.3
+0-RTT early data and TCP Fast Open, validated across the full CI matrix.
+The remaining work is the "Remaining scope" list above (security grouping,
+config flexibility, OS config sources, more backends, tests/docs).
 
 This section describes the original backend building blocks the branch
 started from; see the phase sections and the progress log for what has
@@ -386,37 +420,83 @@ Recorded from analysis (2026-07-09) so the rationale isn't lost:
 
 ### Host OS configuration
 
-- [ ] **Android**: Private DNS is the one mainstream OS DoT deployment.
-      `ares_android.c` already uses ConnectivityManager/LinkProperties via
-      JNI; extend with `LinkProperties.isPrivateDnsActive()` and
-      `getPrivateDnsServerName()` (API 28+).  Hostname-only mode requires
-      bootstrap resolution of the resolver name over Do53 — decide whether
-      to support that or only apply DoT when the OS supplies both.
-- [ ] **systemd-resolved** (Linux): `DNSOverTLS=yes|opportunistic` in
-      `resolved.conf`/drop-ins and per-link settings.  Machines using the
-      127.0.0.53 stub get DoT transparently and c-ares should *not*
-      second-guess; the interesting case is `resolv.conf` pointing at real
-      upstreams while resolved is configured for DoT.  Investigate reading
-      the config (file parse vs D-Bus/varlink query) — likely follow-up,
-      not initial scope.
-- [ ] **Windows**: no OS-level DoT as of Win11 (native support is DoH:
-      `Dnscache\Parameters\DohInterfaceSettings`).  Nothing to read for
-      DoT; revisit if Microsoft ships DoT.  (Reading DoH config becomes
-      relevant only with a future DoH transport.)
-- [ ] **macOS**: encrypted-DNS is configured via profiles /
-      `NEDNSSettingsManager`; the private `dnsinfo.h` snapshot c-ares uses
-      does not obviously expose it.  Investigate `scutil --dns` /
-      newer dnsinfo fields; likely out of initial scope.
-- [ ] **DDR (RFC 9462/9463)** — opt-in upgrade path: query
-      `_dns.resolver.arpa` SVCB (c-ares already parses SVCB/HTTPS RRs) to
-      discover the Do53 resolver's designated DoT endpoint (`alpn=dot`,
-      port, target name), verify per RFC 9462 §4.2 (certificate must cover
-      the unencrypted resolver IP), and upgrade.  This is the
-      standards-track answer to "the OS only gave us an IP" and probably
-      the highest-value auto-config item; needs an explicit opt-in flag.
-- [ ] Ordering/failover policy when a channel mixes DoT and Do53 servers
-      (strict DoT server unreachable -> fall back to plaintext or fail?
-      Strict must not silently fall back; opportunistic may).
+Reading the host OS's DoT configuration is a substantial research +
+implementation area covered in its own section below (OS DoT configuration
+sources) and the companion research doc `DOT-OS-CONFIG.md`.  It is listed
+here only to mark where it slots into config hookup.
+
+### Server security grouping (no silent downgrade)
+
+A channel can end up with a mix of secure (DoT) and plaintext (Do53)
+servers — e.g. an app configures a DoT resolver but the system also
+supplies Do53 upstreams.  The current `server_sort_cb` orders purely by
+health (consecutive failures, then retry time, then config index), so a
+DoT server with a single failure loses to a healthy Do53 server: a silent
+privacy downgrade.  Preventing that is a core security requirement, not a
+nicety.
+
+**Decided policy (2026-07-11): strict tier with opt-in fallback.**
+- Secure servers form a strictly higher-priority tier than plaintext:
+  server selection exhausts all usable secure servers before ever
+  considering a plaintext one for a *user query*.
+- Default: **no downgrade.**  If secure servers are configured and all are
+  unreachable/failing, user queries fail rather than fall back to
+  plaintext.
+- A channel flag (working name `ARES_FLAG_DNS_ALLOW_DOWNGRADE`) lets an
+  application opt in to plaintext fallback when the entire secure tier is
+  down.  Off by default.
+- Plaintext servers may still be used for **bootstrap resolution** (below)
+  regardless of the flag — that path never answers user queries.
+
+- [ ] Add a security-tier key to `server_sort_cb` (secure before insecure)
+      so selection/failover honors the tier; a query started against the
+      secure tier must not silently retry onto the insecure tier.
+- [ ] `ARES_FLAG_DNS_ALLOW_DOWNGRADE` (default off) gating any
+      cross-tier fallback for user queries.
+- [ ] When the secure tier is exhausted and downgrade is off, return a
+      clear status (not a generic SERVFAIL that hides the downgrade
+      refusal).
+- [ ] Tests: mixed DoT/Do53 channel prefers DoT; DoT-down + no flag =
+      query fails (no plaintext leak); DoT-down + flag = plaintext used;
+      pure-Do53 channel unchanged.
+
+### Bootstrap resolution (IP <-> hostname for validation)
+
+Some configuration sources give only a resolver **IP** (no hostname, so
+strict certificate validation by name isn't possible) or only a
+**hostname** (no address to dial).  Per the maintainer's intent, c-ares
+may resolve the missing half over the **insecure** servers during init or
+on first use — solely to *enable* the secure connection (SNI / cert
+validation), never to answer user queries.
+
+- [ ] Design the bootstrap lookup (when, cached where, failure handling)
+      and its interaction with the security tier (bootstrap explicitly
+      allowed to use insecure servers).
+- [ ] Decide the IP-only fallback: opportunistic encrypt-only vs.
+      IP-in-SAN verification (`X509_VERIFY_PARAM_set1_ip`) vs. reverse
+      lookup for a name.  Ties into the "no hostname" open question below.
+- Entangled with OS config reading (which is what produces IP-only /
+  hostname-only entries) and with #642 domain-specific servers, so this
+  lands alongside that work rather than standalone.
+
+### Configuration flexibility (custom CA, client certs / mTLS, hostname)
+
+Captured from issue #818 intent and a concrete user request (mTLS to a
+private DoT resolver):
+
+- [ ] **Custom CA certificate(s)** for validating the resolver, instead of
+      (or in addition to) the system trust store.  The internal
+      `ares_tls_set_cadata()` already exists; needs a public config surface
+      (URI query key like `cafile=`/`cadata=`, and/or an option).
+- [ ] **Client certificates (mTLS)** to authenticate c-ares to the
+      upstream resolver — requested in #818.  Needs cert+key config plumbed
+      into the backend (`SSL_CTX_use_certificate`/`_PrivateKey` on the
+      client side) and a config surface.
+- [x] **Skip / relax hostname validation** — already available as
+      `verify=opportunistic` (encrypt without verification); a
+      verify-chain-but-not-name middle mode could be added if needed.
+- [ ] Decide the config surface for the above (URI query keys vs. new
+      `ares_set_*` API vs. options struct) and the ABI implications.
 
 ## Phase 3 — Testing (full-stack; extends the Phase 1 Step 0 harness)
 
@@ -493,13 +573,83 @@ already exists from Phase 1 Step 0; this phase covers the integrated stack.
   per-channel and survives reinit today — verify).
 - Session cache size bound / expiry (currently unbounded, per-channel;
   fine for typical few-server channels, but put a cap on it).
-- Second crypto backend priority (Schannel would remove the OpenSSL
-  dependency on the platform where distribution is hardest).
+- Session cache eviction is currently keyed on graceful vs. abrupt close;
+  confirm that interacts sanely with `ARES_CONN_FLAG_NONEW` retirement.
+
+## Additional crypto backends
+
+The provider abstraction (`ares_cryptoimp_*` / `ares_tlsimp_*`) was built
+to make backends pluggable.  OpenSSL >= 3 is the only one implemented.
+Others, with the challenges the maintainer documented in #818:
+
+- **Windows SChannel** — removes the OpenSSL dependency on the platform
+  where shipping it is hardest.  Challenges: the common SSPI/Schannel
+  examples don't cover TLS 1.3; TLS 1.3 needs correct handling of
+  `SEC_I_RENEGOTIATE` in `DecryptMessage`; and it is **not clear how to
+  send TLS early data (0-RTT)** via Schannel, so 0-RTT may be
+  OpenSSL-only.  Refs in the issue.
+- **Apple** — SecureTransport is legacy and TLS 1.2-only (unusable for a
+  1.3-era feature).  The modern Network.framework doesn't expose a
+  buffer-in/buffer-out TLS primitive: because c-ares lets the app swap the
+  socket layer via `ares_set_socket_functions()`, we can't delegate the
+  actual network I/O to Network.framework, and the integration would need
+  Objective-C.  Likely not viable as a c-ares backend; Apple platforms use
+  the OpenSSL backend.
+- **wolfSSL / rustls-ffi / mbedTLS** — plausible additional backends for
+  embedded / small-footprint or memory-safe deployments; not scoped yet.
+
+Priority: the abstraction exists, so a second backend is additive and
+non-urgent.  Schannel is the highest-value target (dependency-free
+Windows) if/when someone takes the TLS 1.3 + 0-RTT investigation.
+
+## OS DoT configuration sources
+
+Reading DoT configuration from the host OS the way c-ares already reads
+plaintext DNS config.  This is a research item in its own right — which
+operating systems expose DoT in their system resolver, how that config is
+stored, and whether a library can read it — captured in a dedicated
+document:
+
+- [ ] **Research: OS DoT config landscape** — see
+      [`DOT-OS-CONFIG.md`](DOT-OS-CONFIG.md) (platform-by-platform:
+      supported?, where stored, readable-by-library?, fields available,
+      gotchas, sources).  Drives which sources are worth implementing and
+      in what order.
+
+Known targets (details/decisions deferred to the research doc):
+
+- [ ] **Android** Private DNS (LinkProperties private-DNS name/active, via
+      the existing JNI/ConnectivityManager path).
+- [ ] **Linux / systemd-resolved** — read resolved's real config /
+      upstreams directly rather than trusting the 127.0.0.53 stub (the
+      maintainer's stated preference); this also unlocks per-domain
+      servers (#642), which `/etc/resolv.conf` cannot express.
+- [ ] **macOS / iOS** — encrypted-DNS via profiles / `NEDNSSettingsManager`;
+      determine whether the `dnsinfo` snapshot or `scutil --dns` exposes
+      it to an unprivileged library.
+- [ ] **Windows** — believed DoH-only at the OS level (no native DoT);
+      confirm in the research doc.  Reading DoH config becomes relevant
+      only with a future DoH transport.
+- [ ] **DDR (RFC 9462)** SVCB-based auto-upgrade and **DNR (RFC 9463)**
+      DHCP/RA-advertised encrypted resolvers — the cross-platform,
+      standards-track answer when the OS only supplies a plaintext IP.
+      c-ares already parses SVCB/HTTPS RRs.  Needs an explicit opt-in.
 
 ## Progress log
 
 Newest first.
 
+- 2026-07-11: plan expanded to full scope after reviewing issue #818
+  intent.  Added first-class sections for server security grouping
+  (decided policy: strict tier + opt-in ARES_FLAG_DNS_ALLOW_DOWNGRADE,
+  no silent plaintext downgrade by default), bootstrap resolution
+  (IP<->hostname over insecure servers, never for user queries),
+  configuration flexibility (custom CA, client certs/mTLS, hostname
+  modes), additional crypto backends (Schannel/Apple challenges from the
+  issue), and OS DoT config sources with a companion research doc
+  DOT-OS-CONFIG.md (Android/systemd-resolved/macOS/Windows + DDR/DNR).
+  Added a top-level Scope overview.  No phase renumbering (issue predates
+  this plan; intent only).
 - 2026-07-11: TFO composition landed.  TFO is enabled for TLS connections
   too, so OpenSSL's ClientHello (with 0-RTT early data on a resumed
   session) rides the SYN via the existing TFO_INITIAL sendto path -- true
