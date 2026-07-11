@@ -217,6 +217,16 @@ research pass; claims are cited inline, uncertainties flagged.
     a brute-force scan of **every** SCDynamicStore key for the configured
     server / name / `DNSProtocol` / `TLS` / `853` found nothing.  The VPN
     confound is eliminated — the behavior is the same clean.
+  - *DoT proven active while config stays hidden (strongest evidence):*
+    with the profile active, `netstat` shows a live **ESTABLISHED TCP
+    connection to `2606:4700:4700::853`** (Cloudflare `one.one.one.one`
+    over DoT) originating from `mDNSResponder` -- so DoT is demonstrably
+    working.  Yet the real server appears **only in the socket table**,
+    never in any config surface (dnsinfo/scutil/SCDynamicStore still show
+    only the `127.0.0.1` placeholder).  The resolver is observable as a
+    *connection* but not as readable *configuration*, and the socket table
+    carries no `ServerName` for cert validation anyway.  (Aside: `udp/5353`
+    listeners are Bonjour/mDNS from apps like Chrome, unrelated to DoT.)
   **Settled:** on current macOS the active DoT config is exposed only as a
   `127.0.0.1` placeholder in every surface a C library can read
   (`dnsinfo`, `scutil --dns`, SCDynamicStore incl. `State:/Network/PrivateDNS`
