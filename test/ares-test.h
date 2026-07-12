@@ -35,6 +35,8 @@
 #include "gtest/gtest.h"
 #include "gmock/gmock.h"
 
+#include "ares-test-tls-server.h"
+
 #if defined(HAVE_USER_NAMESPACE) && defined(HAVE_UTS_NAMESPACE)
 #  define HAVE_CONTAINER
 #endif
@@ -293,6 +295,9 @@ public:
       sclose(fd);
     }
     connfds_.clear();
+#ifdef CARES_USE_CRYPTO
+    tls_conns_.clear();
+#endif
     free(tcp_data_);
     tcp_data_     = NULL;
     tcp_data_len_ = 0;
@@ -320,6 +325,16 @@ public:
     return tcpport_;
   }
 
+#ifdef CARES_USE_CRYPTO
+  // Terminate TLS on accepted TCP connections using the given (backend-
+  // agnostic) server context, turning this into a mock DoT server.  Must be
+  // set before the client connects.
+  void SetTLSCtx(std::shared_ptr<test::TlsServerCtx> ctx)
+  {
+    tls_ctx_ = ctx;
+  }
+#endif
+
 private:
   void           ProcessRequest(ares_socket_t fd, struct sockaddr_storage *addr,
                                 ares_socklen_t addrlen, const std::vector<byte> &req,
@@ -327,6 +342,17 @@ private:
                                 int rrtype);
   void           ProcessPacket(ares_socket_t fd, struct sockaddr_storage *addr,
                                ares_socklen_t addrlen, byte *data, int len);
+  // Append received TCP bytes to tcp_data_ and dispatch any complete
+  // length-prefixed frames.
+  void           ProcessTCPFrames(ares_socket_t fd, struct sockaddr_storage *addr,
+                                  ares_socklen_t addrlen, const byte *data,
+                                  size_t len);
+  // Close and forget a TCP (or TLS) connection fd.
+  void           CloseConn(ares_socket_t fd);
+#ifdef CARES_USE_CRYPTO
+  // Write any pending outbound ciphertext for a TLS connection to its socket.
+  void           FlushTLS(ares_socket_t fd, test::TlsServerConn *conn);
+#endif
   unsigned short udpport_;
   unsigned short tcpport_;
   ares_socket_t  udpfd_;
@@ -339,6 +365,10 @@ private:
   bool                    disconnect_after_reply_;
   unsigned char          *tcp_data_;
   size_t                  tcp_data_len_;
+#ifdef CARES_USE_CRYPTO
+  std::shared_ptr<test::TlsServerCtx>                              tls_ctx_;
+  std::map<ares_socket_t, std::unique_ptr<test::TlsServerConn>>    tls_conns_;
+#endif
 };
 
 // Test fixture that uses a mock DNS server.

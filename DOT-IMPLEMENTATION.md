@@ -499,18 +499,28 @@ accept/reject) already exists; these exercise the integrated stack.
       surface).  *Partial:* CryptoDoTQuery already runs a real query
       through the process loop over a TLS connection on the default
       (select) backend; the all-event-backend sweep remains.
-- [ ] **Mock DoT server**: extend the gmock test server with a TLS
-      variant when built `CARES_CRYPTO=ON`, reusing the Step 0
-      runtime-generated CA/server-cert plumbing, with a test hook to
-      inject the CA (or `verify=none`) into the client ctx.  Covers via
-      real `ares_query()` traffic: handshake, framed query/response,
-      server-initiated close, mid-handshake close, handshake timeout,
-      certificate mismatch in strict vs opportunistic mode, session
-      resumption on second connection.  *Partial:* CryptoDoTQuery (real
-      query + connection reuse) and CryptoDoTVerifyFail (strict cert
-      mismatch, no plaintext fallback) exist via a threaded in-test DoT
-      server; the remaining sub-cases and a gmock-integrated variant
-      remain.
+- [~] **Mock DoT server** (gmock-integrated, backend-agnostic).  The
+      `MockServer` gained optional TLS termination driven by an in-memory,
+      non-blocking server-side TLS endpoint (`test::TlsServerCtx` /
+      `TlsServerConn`) so it fits the single-threaded process loop.  The
+      endpoint is implemented with **whichever crypto backend c-ares was
+      built against**, so the same tests exercise the OpenSSL and Schannel
+      *client* backends without either needing the other's library
+      (`ares-test-tls-server.{h,cc}`).  Focused edge-case tests run a real
+      `ares_gethostbyname()` through the full process loop
+      (`ares-test-tls-mock.cc`): handshake + framed query/response, strict
+      verification failure (no plaintext fallback), opportunistic (encrypt
+      without verify), and server-initiated close + reconnect.
+      - [x] **OpenSSL server impl** — memory-BIO driven; 4 tests green
+        locally and on the OpenSSL CI legs (these now actually run DoT on
+        Windows/MSVC+OpenSSL too, not just compile it).
+      - [ ] **Schannel server impl** — `AcceptSecurityContext` +
+        Encrypt/DecryptMessage server side (self-signed cert via
+        `CertCreateSelfSignCertificate`), so the MSVC Schannel leg runs the
+        same DoT tests against the Schannel client.  Until it lands the
+        mock tests skip on Schannel builds (null factory).
+      - [ ] Remaining sub-cases: mid-handshake close, handshake timeout,
+        session resumption on a second connection.
 - (Done in Phase 1 — CryptoDoTEarlyData: server observes the 2nd query as
   early data, no loss/dup; see the Early Data item there.)  A channel-level
   *reject* variant (fresh server ticket keys) could still be added, though
@@ -1137,6 +1147,18 @@ a DoT server that c-ares then reads via Tier 1.
 
 Newest first.
 
+- 2026-07-12: Schannel client backend now compiles and links clean on the
+  MSVC Schannel CI leg (needed `<winternl.h>` for the modern schannel.h
+  TLS 1.3 structs).  Added a **gmock-integrated, backend-agnostic mock DoT
+  server**: `MockServer` optionally terminates TLS via an in-memory,
+  non-blocking server endpoint implemented with the compiled-in crypto
+  backend, so the same DoT tests exercise the OpenSSL and Schannel client
+  backends without cross-dependency.  OpenSSL server impl + 4 focused
+  edge-case tests (query, strict verify-fail, opportunistic, server-close
+  + reconnect) pass locally and add real DoT coverage on the Windows
+  OpenSSL leg; the Schannel server impl (and mid-handshake/timeout/
+  resumption sub-cases) remain.  Per maintainer guidance these are focused
+  TLS edge cases, not the whole suite re-run over TLS.
 - 2026-07-12: adig verified end to end against real Cloudflare DoT
   (`adig -s 'dns+tls://1.1.1.1?hostname=one.one.one.one' example.com`).
   Client certificates (mTLS) moved out of Phase 1 into a Phase 2 subsection
