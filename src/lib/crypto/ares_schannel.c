@@ -39,10 +39,14 @@
 #  endif
 
 #  include <windows.h>
-#  include <security.h>
-#  include <schannel.h>
-#  include <sspi.h>
+/* <winternl.h> provides UNICODE_STRING, which the modern schannel.h
+ * CRYPTO_SETTINGS / TLS_PARAMETERS / SCH_CREDENTIALS structures reference;
+ * without it schannel.h fails to parse on recent SDKs. */
+#  include <winternl.h>
 #  include <wincrypt.h>
+#  include <security.h>
+#  include <sspi.h>
+#  include <schannel.h>
 
 /* Flags for InitializeSecurityContext.  MANUAL_CRED_VALIDATION lets us run
  * our own chain/name verification so the default/strict/opportunistic modes
