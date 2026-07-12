@@ -63,7 +63,9 @@ X509 *MkCert(EVP_PKEY *pubkey, EVP_PKEY *signkey, X509 *issuer, long serial,
   X509_gmtime_adj(X509_getm_notBefore(x), -60);
   X509_gmtime_adj(X509_getm_notAfter(x), 60L * 60L);
   X509_set_pubkey(x, pubkey);
-  name = X509_get_subject_name(x);
+  /* X509_get_subject_name() returns const on some builds (e.g. the Windows
+   * OpenSSL package); the add-entry API needs a mutable pointer */
+  name = (X509_NAME *)(size_t)X509_get_subject_name(x);
   X509_NAME_add_entry_by_txt(
     name, "CN", MBSTRING_ASC,
     (const unsigned char *)(is_ca ? "c-ares test CA" : "c-ares test server"),
