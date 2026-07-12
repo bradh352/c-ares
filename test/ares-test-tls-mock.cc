@@ -306,6 +306,167 @@ TEST_F(MockDoTServerTest, HandshakeStallTimeout)
   EXPECT_NE(ARES_SUCCESS, result.status_);
 }
 
+namespace {
+const char *DoTEvsysName(ares_evsys_t evsys)
+{
+  switch (evsys) {
+    case ARES_EVSYS_WIN32:
+      return "WIN32";
+    case ARES_EVSYS_EPOLL:
+      return "EPOLL";
+    case ARES_EVSYS_KQUEUE:
+      return "KQUEUE";
+    case ARES_EVSYS_POLL:
+      return "POLL";
+    case ARES_EVSYS_SELECT:
+      return "SELECT";
+    default:
+      return "DEFAULT";
+  }
+}
+
+std::string DoTPrintEvsysFamily(
+  const testing::TestParamInfo<std::tuple<ares_evsys_t, int>> &info)
+{
+  std::string name  = DoTEvsysName(std::get<0>(info.param));
+  name             += "_";
+  name             += af_tostr(std::get<1>(info.param));
+  return name;
+}
+}  // namespace
+
+/* Run a DoT query under c-ares's own event thread, parametrized over every
+ * event backend the platform supports (epoll / kqueue / poll / select / IOCP).
+ * The want-flag remapping the TLS layer performs is exactly the kind of thing
+ * that behaves differently per backend, so this is the DoT-specific sweep. */
+class MockDoTEventThreadTest
+  : public LibraryTest,
+    public ::testing::WithParamInterface<std::tuple<ares_evsys_t, int>> {
+public:
+  MockDoTEventThreadTest()
+  {
+    tls_ctx_ = TlsServerCtx::Create();
+    if (tls_ctx_ == nullptr) {
+      return;
+    }
+    server_.reset(
+      new testing::NiceMock<MockServer>(std::get<1>(GetParam()), mock_port));
+    server_->SetTLSCtx(tls_ctx_);
+  }
+
+  ~MockDoTEventThreadTest()
+  {
+    if (channel_ != nullptr) {
+      ares_destroy(channel_);
+    }
+  }
+
+  bool HasBackend() const
+  {
+    return tls_ctx_ != nullptr;
+  }
+
+  bool BuildChannel()
+  {
+    struct ares_options opts;
+    int                 optmask = 0;
+    char                csv[160];
+    int                 family = std::get<1>(GetParam());
+    const char         *ip     = (family == AF_INET) ? "127.0.0.1" : "[::1]";
+
+    memset(&opts, 0, sizeof(opts));
+    opts.evsys           = std::get<0>(GetParam());
+    optmask             |= ARES_OPT_EVENT_THREAD;
+    opts.ndomains        = 0;
+    optmask             |= ARES_OPT_DOMAINS;
+    opts.timeout         = 1000;
+    optmask             |= ARES_OPT_TIMEOUTMS;
+    opts.tries           = 2;
+    optmask             |= ARES_OPT_TRIES;
+    opts.qcache_max_ttl  = 0;
+    optmask             |= ARES_OPT_QUERY_CACHE;
+
+    if (ares_init_options(&channel_, &opts, optmask) != ARES_SUCCESS) {
+      return false;
+    }
+
+    {
+      std::string ca = tls_ctx_->CaPEM();
+      if (ares_tls_set_cadata(channel_->crypto_ctx,
+                              (const unsigned char *)ca.data(),
+                              ca.size()) != ARES_SUCCESS) {
+        return false;
+      }
+    }
+
+    snprintf(csv, sizeof(csv), "dns+tls://%s:%u?verify=strict", ip,
+             (unsigned int)server_->tcpport());
+    return ares_set_servers_csv(channel_, csv) == ARES_SUCCESS;
+  }
+
+  /* c-ares drives the client via its own event thread; we only pump the mock
+   * server's sockets (mirrors MockEventThreadOptsTest::Process). */
+  void Process()
+  {
+    while (ares_queue_active_queries(channel_)) {
+      std::set<ares_socket_t> fds = server_->fds();
+      fd_set                  readers;
+      int                     nfds = 0;
+      struct timeval          tv;
+
+      FD_ZERO(&readers);
+      for (ares_socket_t fd : fds) {
+        FD_SET(fd, &readers);
+        if (fd >= (ares_socket_t)nfds) {
+          nfds = (int)fd + 1;
+        }
+      }
+      tv.tv_sec  = 0;
+      tv.tv_usec = 20000;
+      if (select(nfds, &readers, nullptr, nullptr, &tv) < 0) {
+        return;
+      }
+      for (ares_socket_t fd : fds) {
+        if (FD_ISSET(fd, &readers)) {
+          server_->ProcessFD(fd);
+        }
+      }
+    }
+  }
+
+protected:
+  std::shared_ptr<TlsServerCtx>                  tls_ctx_;
+  std::unique_ptr<testing::NiceMock<MockServer>> server_;
+  ares_channel_t                                *channel_ = nullptr;
+};
+
+TEST_P(MockDoTEventThreadTest, Query)
+{
+  if (!HasBackend()) {
+    GTEST_SKIP() << "no mock DoT server backend for this crypto build";
+  }
+  ASSERT_TRUE(BuildChannel());
+
+  DNSPacket rsp;
+  rsp.set_response()
+    .set_aa()
+    .add_question(new DNSQuestion("dot.example.com", T_A))
+    .add_answer(new DNSARR("dot.example.com", 100, { 1, 2, 3, 4 }));
+  ON_CALL(*server_, OnRequest("dot.example.com", T_A))
+    .WillByDefault(SetReply(server_.get(), &rsp));
+
+  HostResult result;
+  ares_gethostbyname(channel_, "dot.example.com", AF_INET, HostCallback,
+                     &result);
+  Process();
+  EXPECT_TRUE(result.done_);
+  EXPECT_EQ(ARES_SUCCESS, result.status_);
+}
+
+INSTANTIATE_TEST_SUITE_P(EventBackends, MockDoTEventThreadTest,
+                         ::testing::ValuesIn(ares::test::evsys_families),
+                         DoTPrintEvsysFamily);
+
 }  // namespace test
 }  // namespace ares
 

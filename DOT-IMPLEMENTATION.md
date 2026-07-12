@@ -498,13 +498,13 @@ bridge.  No delegation of network I/O to the OS.
 Phase 1 ships as a single PR, so its full-stack tests live here.  The
 Step 0 backend coverage (state machine, resumption, early-data
 accept/reject) already exists; these exercise the integrated stack.
-- [ ] **`ares_conn_interpret_events()` through the real process loop**:
+- [x] **`ares_conn_interpret_events()` through the real process loop**:
       Step 0 covers the mapping logic directly; this validates it embedded
-      in `ares_process_fds()` across all event backends via the mock-TLS
-      suite (per-backend timing differences are where remapping bugs
-      surface).  *Partial:* CryptoDoTQuery already runs a real query
-      through the process loop over a TLS connection on the default
-      (select) backend; the all-event-backend sweep remains.
+      in `ares_process_fds()` across all event backends.  `MockDoTEventThreadTest`
+      runs a real DoT `ares_gethostbyname()` under c-ares's own event thread,
+      parametrized over every event backend the platform supports (kqueue /
+      poll / select on macOS/BSD, epoll on Linux, WIN32/IOCP on Windows) ×
+      IPv4/IPv6 — where per-backend want-flag remapping bugs would surface.
 - [~] **Mock DoT server** (gmock-integrated, backend-agnostic).  The
       `MockServer` gained optional TLS termination driven by an in-memory,
       non-blocking server-side TLS endpoint (`test::TlsServerCtx` /
@@ -542,10 +542,11 @@ accept/reject) already exists; these exercise the integrated stack.
   *reject* variant (fresh server ticket keys) could still be added, though
   CryptoTLSEarlyDataReject already pins the no-loss/no-dup contract at the
   backend level.
-- [ ] **Event-loop integration**: run the mock-TLS suite under all event
-      backends (epoll/kqueue/poll/select/IOCP configurations CI already
-      exercises) — the want-flag remapping is exactly the kind of thing
-      that behaves differently per backend.
+- [x] **Event-loop integration**: `MockDoTEventThreadTest` runs the DoT
+      query under every event backend the platform supports
+      (epoll/kqueue/poll/select/IOCP) via `ares::test::evsys_families`, on
+      all three crypto backends through CI — the want-flag remapping is
+      exactly the kind of thing that behaves differently per backend.
 - [ ] **Live tests** (opt-in, like existing live suite): 1.1.1.1 /
       8.8.8.8 / 9.9.9.9 with their hostnames, strict mode.
 - (Done in Phase 1 — see the CI item under Step 0.)  Remaining CI: a macOS
