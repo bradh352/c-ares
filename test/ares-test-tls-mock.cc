@@ -90,14 +90,14 @@ public:
 
     memset(&opts, 0, sizeof(opts));
     /* Deterministic: no search domains, short timeout, no query cache */
-    opts.ndomains       = 0;
-    optmask            |= ARES_OPT_DOMAINS;
-    opts.timeout        = 1000;
-    optmask            |= ARES_OPT_TIMEOUTMS;
-    opts.tries          = 2;
-    optmask            |= ARES_OPT_TRIES;
-    opts.qcache_max_ttl = 0;
-    optmask            |= ARES_OPT_QUERY_CACHE;
+    opts.ndomains        = 0;
+    optmask             |= ARES_OPT_DOMAINS;
+    opts.timeout         = 1000;
+    optmask             |= ARES_OPT_TIMEOUTMS;
+    opts.tries           = 2;
+    optmask             |= ARES_OPT_TRIES;
+    opts.qcache_max_ttl  = 0;
+    optmask             |= ARES_OPT_QUERY_CACHE;
 
     if (ares_init_options(&channel_, &opts, optmask) != ARES_SUCCESS) {
       return false;
@@ -143,7 +143,7 @@ TEST_F(MockDoTServerTest, Query)
   rsp.set_response()
     .set_aa()
     .add_question(new DNSQuestion("dot.example.com", T_A))
-    .add_answer(new DNSARR("dot.example.com", 100, {1, 2, 3, 4}));
+    .add_answer(new DNSARR("dot.example.com", 100, { 1, 2, 3, 4 }));
   ON_CALL(*server_, OnRequest("dot.example.com", T_A))
     .WillByDefault(SetReply(server_.get(), &rsp));
 
@@ -171,7 +171,7 @@ TEST_F(MockDoTServerTest, VerifyFailStrict)
   rsp.set_response()
     .set_aa()
     .add_question(new DNSQuestion("dot.example.com", T_A))
-    .add_answer(new DNSARR("dot.example.com", 100, {1, 2, 3, 4}));
+    .add_answer(new DNSARR("dot.example.com", 100, { 1, 2, 3, 4 }));
   ON_CALL(*server_, OnRequest("dot.example.com", T_A))
     .WillByDefault(SetReply(server_.get(), &rsp));
 
@@ -196,7 +196,7 @@ TEST_F(MockDoTServerTest, Opportunistic)
   rsp.set_response()
     .set_aa()
     .add_question(new DNSQuestion("dot.example.com", T_A))
-    .add_answer(new DNSARR("dot.example.com", 100, {5, 6, 7, 8}));
+    .add_answer(new DNSARR("dot.example.com", 100, { 5, 6, 7, 8 }));
   ON_CALL(*server_, OnRequest("dot.example.com", T_A))
     .WillByDefault(SetReply(server_.get(), &rsp));
 
@@ -221,7 +221,7 @@ TEST_F(MockDoTServerTest, ServerCloseThenReconnect)
   rsp.set_response()
     .set_aa()
     .add_question(new DNSQuestion("dot.example.com", T_A))
-    .add_answer(new DNSARR("dot.example.com", 100, {1, 2, 3, 4}));
+    .add_answer(new DNSARR("dot.example.com", 100, { 1, 2, 3, 4 }));
   ON_CALL(*server_, OnRequest("dot.example.com", T_A))
     .WillByDefault(SetReply(server_.get(), &rsp));
 

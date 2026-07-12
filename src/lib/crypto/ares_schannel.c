@@ -51,10 +51,10 @@
 /* Flags for InitializeSecurityContext.  MANUAL_CRED_VALIDATION lets us run
  * our own chain/name verification so the default/strict/opportunistic modes
  * behave identically to the OpenSSL backend. */
-#  define ARES_SCHAN_ISC_FLAGS                                       \
-    (ISC_REQ_SEQUENCE_DETECT | ISC_REQ_REPLAY_DETECT |              \
-     ISC_REQ_CONFIDENTIALITY | ISC_RET_EXTENDED_ERROR |            \
-     ISC_REQ_ALLOCATE_MEMORY | ISC_REQ_STREAM |                    \
+#  define ARES_SCHAN_ISC_FLAGS                          \
+    (ISC_REQ_SEQUENCE_DETECT | ISC_REQ_REPLAY_DETECT |  \
+     ISC_REQ_CONFIDENTIALITY | ISC_RET_EXTENDED_ERROR | \
+     ISC_REQ_ALLOCATE_MEMORY | ISC_REQ_STREAM |         \
      ISC_REQ_MANUAL_CRED_VALIDATION)
 
 /* Cap a single socket read pulled into the inbound ciphertext buffer.  A TLS
@@ -69,21 +69,22 @@ struct ares_cryptoimp_ctx {
 };
 
 struct ares_tls {
-  ares_conn_t          *conn;
-  ares_cryptoimp_ctx_t *ctx;
-  CtxtHandle            ctxt;     /* Security context */
-  ares_bool_t           have_ctxt;
-  ares_tls_state_t      state;
-  ares_tls_stateflag_t  flags;
-  ares_conn_err_t       last_io_error;
-  ares_tls_verify_t     verify;   /* Resolved verification mode */
-  char                 *target_name; /* SNI / verification name, or NULL */
+  ares_conn_t              *conn;
+  ares_cryptoimp_ctx_t     *ctx;
+  CtxtHandle                ctxt; /* Security context */
+  ares_bool_t               have_ctxt;
+  ares_tls_state_t          state;
+  ares_tls_stateflag_t      flags;
+  ares_conn_err_t           last_io_error;
+  ares_tls_verify_t         verify;      /* Resolved verification mode */
+  char                     *target_name; /* SNI / verification name, or NULL */
 
   SecPkgContext_StreamSizes sizes;
   ares_bool_t               have_sizes;
 
-  ares_bool_t hs_complete;      /* ISC returned SEC_E_OK; only flush remains */
-  ares_bool_t in_post_handshake;/* Draining a post-handshake (renegotiate) flight */
+  ares_bool_t hs_complete; /* ISC returned SEC_E_OK; only flush remains */
+  ares_bool_t
+    in_post_handshake;     /* Draining a post-handshake (renegotiate) flight */
 
   /* Inbound ciphertext read from the socket, not yet consumed by Schannel.
    * Valid bytes are [0, enc_in_len). */
@@ -142,9 +143,9 @@ static ares_conn_err_t schan_flush(ares_tls_t *tls)
 {
   while (tls->enc_out_off < tls->enc_out_len) {
     size_t          wrote = 0;
-    ares_conn_err_t err   = ares_conn_write_raw(
-      tls->conn, tls->enc_out + tls->enc_out_off,
-      tls->enc_out_len - tls->enc_out_off, &wrote);
+    ares_conn_err_t err =
+      ares_conn_write_raw(tls->conn, tls->enc_out + tls->enc_out_off,
+                          tls->enc_out_len - tls->enc_out_off, &wrote);
     if (err != ARES_CONN_ERR_SUCCESS) {
       tls->last_io_error = err;
       return err;
@@ -242,8 +243,8 @@ static ares_status_t schan_acquire_cred(ares_cryptoimp_ctx_t *ctx)
 
   memset(&creds, 0, sizeof(creds));
   creds.dwVersion = SCHANNEL_CRED_VERSION;
-  creds.dwFlags   = SCH_CRED_MANUAL_CRED_VALIDATION |
-                  SCH_CRED_NO_DEFAULT_CREDS | SCH_USE_STRONG_CRYPTO;
+  creds.dwFlags = SCH_CRED_MANUAL_CRED_VALIDATION | SCH_CRED_NO_DEFAULT_CREDS |
+                  SCH_USE_STRONG_CRYPTO;
 #  endif
 
   ss = AcquireCredentialsHandleA(NULL, (SEC_CHAR *)UNISP_NAME_A,
@@ -309,8 +310,8 @@ ares_status_t ares_tlsimp_set_cadata(ares_cryptoimp_ctx_t *ctx,
   }
 
   if (ctx->ca_store == NULL) {
-    ctx->ca_store = CertOpenStore(CERT_STORE_PROV_MEMORY, 0, (HCRYPTPROV_LEGACY)0,
-                                  0, NULL);
+    ctx->ca_store =
+      CertOpenStore(CERT_STORE_PROV_MEMORY, 0, (HCRYPTPROV_LEGACY)0, 0, NULL);
     if (ctx->ca_store == NULL) {
       return ARES_ESERVFAIL; /* LCOV_EXCL_LINE: DefensiveCoding */
     }
@@ -324,8 +325,7 @@ ares_status_t ares_tlsimp_set_cadata(ares_cryptoimp_ctx_t *ctx,
     DWORD                derlen = 0;
     unsigned char       *der;
 
-    b = ares_memmem(p, (size_t)(end - p),
-                    (const unsigned char *)begin_marker,
+    b = ares_memmem(p, (size_t)(end - p), (const unsigned char *)begin_marker,
                     sizeof(begin_marker) - 1);
     if (b == NULL) {
       break;
@@ -373,20 +373,20 @@ ares_status_t ares_tlsimp_set_cadata(ares_cryptoimp_ctx_t *ctx,
 
 static ares_conn_err_t schan_verify_cert(ares_tls_t *tls)
 {
-  SECURITY_STATUS                 ss;
-  PCCERT_CONTEXT                  cert   = NULL;
-  PCCERT_CHAIN_CONTEXT            chain  = NULL;
-  HCERTCHAINENGINE                engine = NULL;
-  CERT_CHAIN_PARA                 chainpara;
-  CERT_CHAIN_POLICY_PARA          polpara;
-  CERT_CHAIN_POLICY_STATUS        polstatus;
+  SECURITY_STATUS                  ss;
+  PCCERT_CONTEXT                   cert   = NULL;
+  PCCERT_CHAIN_CONTEXT             chain  = NULL;
+  HCERTCHAINENGINE                 engine = NULL;
+  CERT_CHAIN_PARA                  chainpara;
+  CERT_CHAIN_POLICY_PARA           polpara;
+  CERT_CHAIN_POLICY_STATUS         polstatus;
   SSL_EXTRA_CERT_CHAIN_POLICY_PARA sslpara;
-  LPWSTR                          wname = NULL;
-  ares_conn_err_t                 rv    = ARES_CONN_ERR_SECURITY;
-  LPCSTR                          usage = szOID_PKIX_KP_SERVER_AUTH;
+  LPWSTR                           wname = NULL;
+  ares_conn_err_t                  rv    = ARES_CONN_ERR_SECURITY;
+  LPCSTR                           usage = szOID_PKIX_KP_SERVER_AUTH;
 
-  ss = QueryContextAttributes(&tls->ctxt, SECPKG_ATTR_REMOTE_CERT_CONTEXT,
-                              &cert);
+  ss =
+    QueryContextAttributes(&tls->ctxt, SECPKG_ATTR_REMOTE_CERT_CONTEXT, &cert);
   if (ss != SEC_E_OK || cert == NULL) {
     return ARES_CONN_ERR_SECURITY;
   }
@@ -396,17 +396,17 @@ static ares_conn_err_t schan_verify_cert(ares_tls_t *tls)
   if (tls->ctx->ca_store != NULL) {
     CERT_CHAIN_ENGINE_CONFIG cfg;
     memset(&cfg, 0, sizeof(cfg));
-    cfg.cbSize          = sizeof(cfg);
-    cfg.hExclusiveRoot  = tls->ctx->ca_store;
+    cfg.cbSize         = sizeof(cfg);
+    cfg.hExclusiveRoot = tls->ctx->ca_store;
     if (!CertCreateCertificateChainEngine(&cfg, &engine)) {
       engine = NULL;
     }
   }
 
   memset(&chainpara, 0, sizeof(chainpara));
-  chainpara.cbSize                                 = sizeof(chainpara);
-  chainpara.RequestedUsage.dwType                  = USAGE_MATCH_TYPE_AND;
-  chainpara.RequestedUsage.Usage.cUsageIdentifier  = 1;
+  chainpara.cbSize                                    = sizeof(chainpara);
+  chainpara.RequestedUsage.dwType                     = USAGE_MATCH_TYPE_AND;
+  chainpara.RequestedUsage.Usage.cUsageIdentifier     = 1;
   chainpara.RequestedUsage.Usage.rgpszUsageIdentifier = (LPSTR *)&usage;
 
   if (!CertGetCertificateChain(engine, cert, NULL, cert->hCertStore, &chainpara,
@@ -425,8 +425,8 @@ static ares_conn_err_t schan_verify_cert(ares_tls_t *tls)
   }
 
   memset(&sslpara, 0, sizeof(sslpara));
-  sslpara.cbSize        = sizeof(sslpara);
-  sslpara.dwAuthType    = AUTHTYPE_SERVER;
+  sslpara.cbSize         = sizeof(sslpara);
+  sslpara.dwAuthType     = AUTHTYPE_SERVER;
   sslpara.pwszServerName = wname; /* NULL => skip name check (chain-only) */
 
   memset(&polpara, 0, sizeof(polpara));
@@ -466,8 +466,8 @@ static ares_conn_err_t schan_finish_handshake(ares_tls_t *tls)
 {
   SECURITY_STATUS ss;
 
-  ss = QueryContextAttributes(&tls->ctxt, SECPKG_ATTR_STREAM_SIZES,
-                              &tls->sizes);
+  ss =
+    QueryContextAttributes(&tls->ctxt, SECPKG_ATTR_STREAM_SIZES, &tls->sizes);
   if (ss != SEC_E_OK) {
     tls->state = ARES_TLS_STATE_ERROR;
     return ARES_CONN_ERR_CONNRESET;
@@ -573,9 +573,9 @@ static ares_conn_err_t schan_handshake(ares_tls_t *tls, ares_bool_t post)
 
     /* Queue any produced handshake token */
     if (outbuf[0].cbBuffer != 0 && outbuf[0].pvBuffer != NULL) {
-      ares_bool_t ok = schan_buf_append(&tls->enc_out, &tls->enc_out_len,
-                                        &tls->enc_out_alloc,
-                                        outbuf[0].pvBuffer, outbuf[0].cbBuffer);
+      ares_bool_t ok =
+        schan_buf_append(&tls->enc_out, &tls->enc_out_len, &tls->enc_out_alloc,
+                         outbuf[0].pvBuffer, outbuf[0].cbBuffer);
       FreeContextBuffer(outbuf[0].pvBuffer);
       if (!ok) {
         return ARES_CONN_ERR_NOMEM; /* LCOV_EXCL_LINE: OutOfMemory */
@@ -817,7 +817,7 @@ ares_conn_err_t ares_tlsimp_read(ares_tls_t *tls, unsigned char *buf,
         }
         schan_enc_in_keep_tail(tls, extra);
         tls->in_post_handshake = ARES_TRUE;
-        herr = schan_handshake(tls, ARES_TRUE);
+        herr                   = schan_handshake(tls, ARES_TRUE);
         if (herr == ARES_CONN_ERR_WOULDBLOCK) {
           return herr;
         }
@@ -901,7 +901,7 @@ ares_conn_err_t ares_tlsimp_write(ares_tls_t *tls, const unsigned char *buf,
   ferr = schan_flush(tls);
   if (ferr == ARES_CONN_ERR_WOULDBLOCK) {
     tls->flags |= ARES_TLS_SF_WRITE_WANTWRITE;
-    *buf_len = 0;
+    *buf_len    = 0;
     return ferr;
   }
   if (ferr != ARES_CONN_ERR_SUCCESS) {
@@ -967,7 +967,7 @@ ares_conn_err_t ares_tlsimp_write(ares_tls_t *tls, const unsigned char *buf,
     ferr = schan_flush(tls);
     if (ferr == ARES_CONN_ERR_WOULDBLOCK) {
       tls->flags |= ARES_TLS_SF_WRITE_WANTWRITE;
-      *buf_len = consumed;
+      *buf_len    = consumed;
       return ferr;
     }
     if (ferr != ARES_CONN_ERR_SUCCESS) {
@@ -1028,10 +1028,9 @@ ares_conn_err_t ares_tlsimp_shutdown(ares_tls_t *tls)
   outdesc.cBuffers     = 1;
   outdesc.pBuffers     = outbuf;
 
-  ss = InitializeSecurityContextA(&tls->ctx->cred, &tls->ctxt,
-                                  (SEC_CHAR *)tls->target_name,
-                                  ARES_SCHAN_ISC_FLAGS, 0, 0, NULL, 0, NULL,
-                                  &outdesc, &ret_flags, NULL);
+  ss = InitializeSecurityContextA(
+    &tls->ctx->cred, &tls->ctxt, (SEC_CHAR *)tls->target_name,
+    ARES_SCHAN_ISC_FLAGS, 0, 0, NULL, 0, NULL, &outdesc, &ret_flags, NULL);
 
   if (outbuf[0].cbBuffer != 0 && outbuf[0].pvBuffer != NULL) {
     schan_buf_append(&tls->enc_out, &tls->enc_out_len, &tls->enc_out_alloc,

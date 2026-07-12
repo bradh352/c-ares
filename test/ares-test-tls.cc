@@ -149,8 +149,8 @@ static X509 *TlsTestMkCert(EVP_PKEY *pubkey, EVP_PKEY *signkey, X509 *issuer,
   X509_set_subject_name(x, name);
   /* Self-signed certs use the subject as the issuer.  X509_set_issuer_name()
    * takes a const name and copies it, so the const getter is fine here. */
-  X509_set_issuer_name(x, issuer != NULL ? X509_get_subject_name(issuer)
-                                         : name);
+  X509_set_issuer_name(x,
+                       issuer != NULL ? X509_get_subject_name(issuer) : name);
   X509_NAME_free(name);
   X509V3_set_ctx_nodb(&v3ctx);
   X509V3_set_ctx(&v3ctx, issuer != NULL ? issuer : x, x, NULL, NULL, 0);

@@ -739,10 +739,11 @@ void MockServer::ProcessFD(ares_socket_t fd) {
 
 }
 
-void MockServer::ProcessTCPFrames(ares_socket_t fd,
+void MockServer::ProcessTCPFrames(ares_socket_t            fd,
                                   struct sockaddr_storage *addr,
                                   ares_socklen_t addrlen, const byte *data,
-                                  size_t len) {
+                                  size_t len)
+{
   tcp_data_ = (unsigned char *)realloc(tcp_data_, tcp_data_len_ + len);
   memcpy(tcp_data_ + tcp_data_len_, data, len);
   tcp_data_len_ += len;
@@ -751,8 +752,9 @@ void MockServer::ProcessTCPFrames(ares_socket_t fd,
    * need to split */
   while (tcp_data_len_ > 2) {
     size_t tcplen = ((size_t)tcp_data_[0] << 8) + (size_t)tcp_data_[1];
-    if (tcp_data_len_ - 2 < tcplen)
+    if (tcp_data_len_ - 2 < tcplen) {
       break;
+    }
 
     ProcessPacket(fd, addr, addrlen, tcp_data_ + 2, (int)tcplen);
 
@@ -764,7 +766,8 @@ void MockServer::ProcessTCPFrames(ares_socket_t fd,
   }
 }
 
-void MockServer::CloseConn(ares_socket_t fd) {
+void MockServer::CloseConn(ares_socket_t fd)
+{
   if (connfds_.find(fd) == connfds_.end()) {
     return; /* already closed / not a tracked connection */
   }
@@ -774,22 +777,23 @@ void MockServer::CloseConn(ares_socket_t fd) {
 #endif
   sclose(fd);
   free(tcp_data_);
-  tcp_data_ = NULL;
+  tcp_data_     = NULL;
   tcp_data_len_ = 0;
 }
 
 #ifdef CARES_USE_CRYPTO
-void MockServer::FlushTLS(ares_socket_t fd, test::TlsServerConn *conn) {
-  std::vector<unsigned char> out = conn->DrainCipher();
-  size_t                     off = 0;
+void MockServer::FlushTLS(ares_socket_t fd, test::TlsServerConn *conn)
+{
+  std::vector<unsigned char> out   = conn->DrainCipher();
+  size_t                     off   = 0;
   int                        flags = 0;
-#ifdef MSG_NOSIGNAL
+#  ifdef MSG_NOSIGNAL
   flags |= MSG_NOSIGNAL;
-#endif
+#  endif
   while (off < out.size()) {
-    ares_ssize_t rc = (ares_ssize_t)sendto(
-      fd, BYTE_CAST(out.data() + off), (SEND_TYPE_ARG3)(out.size() - off),
-      flags, nullptr, 0);
+    ares_ssize_t rc = (ares_ssize_t)sendto(fd, BYTE_CAST(out.data() + off),
+                                           (SEND_TYPE_ARG3)(out.size() - off),
+                                           flags, nullptr, 0);
     if (rc <= 0) {
       break;
     }
@@ -885,7 +889,8 @@ void MockServer::ProcessRequest(ares_socket_t fd, struct sockaddr_storage* addr,
   } else
 #endif
   {
-    ares_ssize_t rc = (ares_ssize_t)sendto(fd, BYTE_CAST reply.data(), (SEND_TYPE_ARG3)reply.size(), flags,
+    ares_ssize_t rc = (ares_ssize_t)sendto(fd, BYTE_CAST reply.data(),
+                                           (SEND_TYPE_ARG3)reply.size(), flags,
                                            (struct sockaddr *)addr, addrlen);
     if (rc < static_cast<ares_ssize_t>(reply.size())) {
       std::cerr << "Failed to send full reply, rc=" << rc << std::endl;

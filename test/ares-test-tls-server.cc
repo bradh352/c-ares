@@ -79,8 +79,8 @@ X509 *MkCert(EVP_PKEY *pubkey, EVP_PKEY *signkey, X509 *issuer, long serial,
   X509_set_subject_name(x, name);
   /* Self-signed certs use the subject as the issuer.  X509_set_issuer_name()
    * takes a const name and copies it, so the const getter is fine here. */
-  X509_set_issuer_name(x, issuer != NULL ? X509_get_subject_name(issuer)
-                                         : name);
+  X509_set_issuer_name(x,
+                       issuer != NULL ? X509_get_subject_name(issuer) : name);
   X509_NAME_free(name);
   X509V3_set_ctx_nodb(&v3ctx);
   X509V3_set_ctx(&v3ctx, issuer != NULL ? issuer : x, x, NULL, NULL, 0);
@@ -212,9 +212,9 @@ public:
   }
 
 private:
-  SSL *ssl_        = nullptr;
-  BIO *rbio_       = nullptr;
-  BIO *wbio_       = nullptr;
+  SSL *ssl_         = nullptr;
+  BIO *rbio_        = nullptr;
+  BIO *wbio_        = nullptr;
   bool established_ = false;
 };
 
@@ -316,7 +316,7 @@ std::unique_ptr<TlsServerCtx> TlsServerCtx::Create()
 }  // namespace test
 }  // namespace ares
 
-#  else /* !CARES_CRYPTO_OPENSSL */
+#  else  /* !CARES_CRYPTO_OPENSSL */
 
 /* No server-side TLS termination is implemented for the compiled-in backend
  * yet (e.g. Schannel).  Provide a null factory so the mock DoT tests link and
@@ -334,4 +334,4 @@ std::unique_ptr<TlsServerCtx> TlsServerCtx::Create()
 
 #  endif /* CARES_CRYPTO_OPENSSL */
 
-#endif /* CARES_USE_CRYPTO */
+#endif   /* CARES_USE_CRYPTO */

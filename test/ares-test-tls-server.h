@@ -47,7 +47,9 @@ namespace test {
  * client backend needs no OpenSSL, and vice versa. */
 class TlsServerConn {
 public:
-  virtual ~TlsServerConn() {}
+  virtual ~TlsServerConn()
+  {
+  }
 
   /* Feed ciphertext that was read from the socket. */
   virtual void FeedCipher(const unsigned char *data, size_t len) = 0;
@@ -73,7 +75,9 @@ public:
 
 class TlsServerCtx {
 public:
-  virtual ~TlsServerCtx() {}
+  virtual ~TlsServerCtx()
+  {
+  }
 
   /* New per-connection server endpoint. */
   virtual std::unique_ptr<TlsServerConn> NewConn() = 0;

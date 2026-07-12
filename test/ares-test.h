@@ -344,14 +344,13 @@ private:
                                ares_socklen_t addrlen, byte *data, int len);
   // Append received TCP bytes to tcp_data_ and dispatch any complete
   // length-prefixed frames.
-  void           ProcessTCPFrames(ares_socket_t fd, struct sockaddr_storage *addr,
-                                  ares_socklen_t addrlen, const byte *data,
-                                  size_t len);
+  void ProcessTCPFrames(ares_socket_t fd, struct sockaddr_storage *addr,
+                        ares_socklen_t addrlen, const byte *data, size_t len);
   // Close and forget a TCP (or TLS) connection fd.
-  void           CloseConn(ares_socket_t fd);
+  void CloseConn(ares_socket_t fd);
 #ifdef CARES_USE_CRYPTO
   // Write any pending outbound ciphertext for a TLS connection to its socket.
-  void           FlushTLS(ares_socket_t fd, test::TlsServerConn *conn);
+  void FlushTLS(ares_socket_t fd, test::TlsServerConn *conn);
 #endif
   unsigned short udpport_;
   unsigned short tcpport_;
@@ -366,8 +365,8 @@ private:
   unsigned char          *tcp_data_;
   size_t                  tcp_data_len_;
 #ifdef CARES_USE_CRYPTO
-  std::shared_ptr<test::TlsServerCtx>                              tls_ctx_;
-  std::map<ares_socket_t, std::unique_ptr<test::TlsServerConn>>    tls_conns_;
+  std::shared_ptr<test::TlsServerCtx>                           tls_ctx_;
+  std::map<ares_socket_t, std::unique_ptr<test::TlsServerConn>> tls_conns_;
 #endif
 };
 
