@@ -316,11 +316,415 @@ std::unique_ptr<TlsServerCtx> TlsServerCtx::Create()
 }  // namespace test
 }  // namespace ares
 
-#  else  /* !CARES_CRYPTO_OPENSSL */
+#  elif defined(CARES_CRYPTO_SCHANNEL)
 
-/* No server-side TLS termination is implemented for the compiled-in backend
- * yet (e.g. Schannel).  Provide a null factory so the mock DoT tests link and
- * skip gracefully until a server impl for this backend is added. */
+/* ========================================================================= *
+ * Windows Schannel server-side TLS backend (SSPI, buffer-in / buffer-out)
+ * ========================================================================= */
+
+#    ifndef SCHANNEL_USE_BLACKLISTS
+#      define SCHANNEL_USE_BLACKLISTS
+#    endif
+#    ifndef SECURITY_WIN32
+#      define SECURITY_WIN32
+#    endif
+
+#    include <windows.h>
+#    include <winternl.h>
+#    include <wincrypt.h>
+#    include <security.h>
+#    include <sspi.h>
+#    include <schannel.h>
+
+#    define ARES_SCHAN_ASC_FLAGS                          \
+      (ASC_REQ_SEQUENCE_DETECT | ASC_REQ_REPLAY_DETECT |  \
+       ASC_REQ_CONFIDENTIALITY | ASC_REQ_EXTENDED_ERROR | \
+       ASC_REQ_ALLOCATE_MEMORY | ASC_REQ_STREAM)
+
+namespace ares {
+namespace test {
+
+namespace {
+
+/* Base64/PEM-encode a DER certificate (BEGIN/END CERTIFICATE headers). */
+std::string DerToPem(const unsigned char *der, size_t len)
+{
+  DWORD       slen = 0;
+  std::string out;
+  if (!CryptBinaryToStringA(der, (DWORD)len, CRYPT_STRING_BASE64HEADER, NULL,
+                            &slen)) {
+    return out;
+  }
+  out.resize(slen);
+  if (!CryptBinaryToStringA(der, (DWORD)len, CRYPT_STRING_BASE64HEADER, &out[0],
+                            &slen)) {
+    out.clear();
+    return out;
+  }
+  out.resize(slen);
+  return out;
+}
+
+/* Self-signed server certificate with an associated private key so Schannel
+ * can present it to the client. */
+PCCERT_CONTEXT MakeSelfSignedCert()
+{
+  BYTE           name_buf[256];
+  CERT_NAME_BLOB subject;
+  subject.pbData = name_buf;
+  subject.cbData = sizeof(name_buf);
+  if (!CertStrToNameA(X509_ASN_ENCODING, "CN=c-ares test server",
+                      CERT_X500_NAME_STR, NULL, name_buf, &subject.cbData,
+                      NULL)) {
+    return NULL;
+  }
+  /* NULL key handle + NULL key-prov-info: create/persist a key and associate
+   * it with the cert so the Schannel server credential can use it. */
+  return CertCreateSelfSignCertificate((HCRYPTPROV_OR_NCRYPT_KEY_HANDLE)NULL,
+                                       &subject, 0, NULL, NULL, NULL, NULL,
+                                       NULL);
+}
+
+class SchannelServerConn : public TlsServerConn {
+public:
+  explicit SchannelServerConn(CredHandle *cred) : cred_(cred)
+  {
+  }
+
+  ~SchannelServerConn() override
+  {
+    if (have_ctxt_) {
+      DeleteSecurityContext(&ctxt_);
+    }
+  }
+
+  void FeedCipher(const unsigned char *data, size_t len) override
+  {
+    enc_in_.insert(enc_in_.end(), data, data + len);
+  }
+
+  std::vector<unsigned char> DrainCipher() override
+  {
+    std::vector<unsigned char> out;
+    out.swap(enc_out_);
+    return out;
+  }
+
+  bool Established() const override
+  {
+    return established_;
+  }
+
+  bool Handshake(bool *fatal) override
+  {
+    return AcceptLoop(fatal, false);
+  }
+
+  bool ReadPlain(std::vector<unsigned char> *out, bool *closed) override
+  {
+    *closed = false;
+    for (;;) {
+      SecBuffer       bufs[4];
+      SecBufferDesc   desc;
+      SECURITY_STATUS ss;
+      SecBuffer      *data  = NULL;
+      SecBuffer      *extra = NULL;
+      int             i;
+
+      if (enc_in_.empty()) {
+        return true;
+      }
+
+      bufs[0].BufferType = SECBUFFER_DATA;
+      bufs[0].pvBuffer   = enc_in_.data();
+      bufs[0].cbBuffer   = (unsigned long)enc_in_.size();
+      for (i = 1; i < 4; i++) {
+        bufs[i].BufferType = SECBUFFER_EMPTY;
+        bufs[i].pvBuffer   = NULL;
+        bufs[i].cbBuffer   = 0;
+      }
+      desc.ulVersion = SECBUFFER_VERSION;
+      desc.cBuffers  = 4;
+      desc.pBuffers  = bufs;
+
+      ss = DecryptMessage(&ctxt_, &desc, 0, NULL);
+
+      if (ss == SEC_E_INCOMPLETE_MESSAGE) {
+        return true; /* need more ciphertext from the socket */
+      }
+      if (ss == SEC_I_CONTEXT_EXPIRED) {
+        *closed = true;
+        return true;
+      }
+      if (ss == SEC_I_RENEGOTIATE) {
+        if (!HandleRenegotiate(bufs)) {
+          return false;
+        }
+        continue;
+      }
+      if (ss != SEC_E_OK) {
+        return false;
+      }
+
+      for (i = 1; i < 4; i++) {
+        if (bufs[i].BufferType == SECBUFFER_DATA && data == NULL) {
+          data = &bufs[i];
+        } else if (bufs[i].BufferType == SECBUFFER_EXTRA && extra == NULL) {
+          extra = &bufs[i];
+        }
+      }
+
+      if (data != NULL && data->cbBuffer > 0) {
+        const unsigned char *p = (const unsigned char *)data->pvBuffer;
+        out->insert(out->end(), p, p + data->cbBuffer);
+      }
+
+      KeepExtra(extra);
+    }
+  }
+
+  bool WritePlain(const unsigned char *data, size_t len) override
+  {
+    size_t off = 0;
+    if (!have_sizes_) {
+      return false;
+    }
+    while (off < len) {
+      size_t                     chunk = len - off;
+      std::vector<unsigned char> buf;
+      SecBuffer                  bufs[4];
+      SecBufferDesc              desc;
+      SECURITY_STATUS            ss;
+      size_t                     total;
+
+      if (chunk > sizes_.cbMaximumMessage) {
+        chunk = sizes_.cbMaximumMessage;
+      }
+      buf.resize(sizes_.cbHeader + chunk + sizes_.cbTrailer);
+      memcpy(buf.data() + sizes_.cbHeader, data + off, chunk);
+
+      bufs[0].BufferType = SECBUFFER_STREAM_HEADER;
+      bufs[0].pvBuffer   = buf.data();
+      bufs[0].cbBuffer   = sizes_.cbHeader;
+      bufs[1].BufferType = SECBUFFER_DATA;
+      bufs[1].pvBuffer   = buf.data() + sizes_.cbHeader;
+      bufs[1].cbBuffer   = (unsigned long)chunk;
+      bufs[2].BufferType = SECBUFFER_STREAM_TRAILER;
+      bufs[2].pvBuffer   = buf.data() + sizes_.cbHeader + chunk;
+      bufs[2].cbBuffer   = sizes_.cbTrailer;
+      bufs[3].BufferType = SECBUFFER_EMPTY;
+      bufs[3].pvBuffer   = NULL;
+      bufs[3].cbBuffer   = 0;
+      desc.ulVersion     = SECBUFFER_VERSION;
+      desc.cBuffers      = 4;
+      desc.pBuffers      = bufs;
+
+      ss = EncryptMessage(&ctxt_, 0, &desc, 0);
+      if (ss != SEC_E_OK) {
+        return false;
+      }
+      total = (size_t)bufs[0].cbBuffer + (size_t)bufs[1].cbBuffer +
+              (size_t)bufs[2].cbBuffer;
+      enc_out_.insert(enc_out_.end(), buf.data(), buf.data() + total);
+      off += chunk;
+    }
+    return true;
+  }
+
+private:
+  /* Keep only the SECBUFFER_EXTRA tail in enc_in_.  Its pvBuffer points inside
+   * enc_in_, so copy it out before overwriting. */
+  void KeepExtra(SecBuffer *extra)
+  {
+    if (extra != NULL && extra->cbBuffer > 0) {
+      std::vector<unsigned char> tmp((const unsigned char *)extra->pvBuffer,
+                                     (const unsigned char *)extra->pvBuffer +
+                                       extra->cbBuffer);
+      enc_in_.swap(tmp);
+    } else {
+      enc_in_.clear();
+    }
+  }
+
+  /* DecryptMessage reported SEC_I_RENEGOTIATE: the handshake records are in
+   * the SECBUFFER_EXTRA; feed them back through AcceptSecurityContext. */
+  bool HandleRenegotiate(SecBuffer *bufs)
+  {
+    SecBuffer *extra = NULL;
+    bool       fatal = false;
+    int        i;
+    for (i = 1; i < 4; i++) {
+      if (bufs[i].BufferType == SECBUFFER_EXTRA) {
+        extra = &bufs[i];
+        break;
+      }
+    }
+    KeepExtra(extra);
+    AcceptLoop(&fatal, true);
+    return !fatal;
+  }
+
+  /* Run AcceptSecurityContext over enc_in_, queuing output tokens into
+   * enc_out_.  Returns true when the (re)negotiation reaches SEC_E_OK.  On the
+   * initial handshake, records the stream sizes and marks established. */
+  bool AcceptLoop(bool *fatal, bool reneg)
+  {
+    *fatal = false;
+    for (;;) {
+      SecBuffer       inbuf[2];
+      SecBuffer       outbuf[1];
+      SecBufferDesc   indesc;
+      SecBufferDesc   outdesc;
+      SECURITY_STATUS ss;
+      ULONG           ret_flags = 0;
+      TimeStamp       ts;
+
+      inbuf[0].BufferType = SECBUFFER_TOKEN;
+      inbuf[0].pvBuffer   = enc_in_.data();
+      inbuf[0].cbBuffer   = (unsigned long)enc_in_.size();
+      inbuf[1].BufferType = SECBUFFER_EMPTY;
+      inbuf[1].pvBuffer   = NULL;
+      inbuf[1].cbBuffer   = 0;
+      indesc.ulVersion    = SECBUFFER_VERSION;
+      indesc.cBuffers     = 2;
+      indesc.pBuffers     = inbuf;
+
+      outbuf[0].BufferType = SECBUFFER_TOKEN;
+      outbuf[0].pvBuffer   = NULL;
+      outbuf[0].cbBuffer   = 0;
+      outdesc.ulVersion    = SECBUFFER_VERSION;
+      outdesc.cBuffers     = 1;
+      outdesc.pBuffers     = outbuf;
+
+      ss = AcceptSecurityContext(cred_, have_ctxt_ ? &ctxt_ : NULL, &indesc,
+                                 ARES_SCHAN_ASC_FLAGS, 0, &ctxt_, &outdesc,
+                                 &ret_flags, &ts);
+      have_ctxt_ = true;
+
+      if (outbuf[0].cbBuffer != 0 && outbuf[0].pvBuffer != NULL) {
+        const unsigned char *p = (const unsigned char *)outbuf[0].pvBuffer;
+        enc_out_.insert(enc_out_.end(), p, p + outbuf[0].cbBuffer);
+        FreeContextBuffer(outbuf[0].pvBuffer);
+      }
+
+      if (ss == SEC_E_INCOMPLETE_MESSAGE) {
+        return false; /* need more input; keep enc_in_ intact */
+      }
+
+      if (ss == SEC_E_OK || ss == SEC_I_CONTINUE_NEEDED) {
+        if (inbuf[1].BufferType == SECBUFFER_EXTRA) {
+          size_t extra = inbuf[1].cbBuffer;
+          enc_in_.erase(enc_in_.begin(),
+                        enc_in_.begin() + (enc_in_.size() - extra));
+        } else {
+          enc_in_.clear();
+        }
+
+        if (ss == SEC_E_OK) {
+          if (!reneg) {
+            QueryContextAttributes(&ctxt_, SECPKG_ATTR_STREAM_SIZES, &sizes_);
+            have_sizes_  = true;
+            established_ = true;
+          }
+          return true;
+        }
+        /* CONTINUE: keep going if more input is buffered, else wait */
+        if (enc_in_.empty()) {
+          return false;
+        }
+        continue;
+      }
+
+      *fatal = true;
+      return false;
+    }
+  }
+
+  CredHandle                *cred_;
+  CtxtHandle                 ctxt_;
+  bool                       have_ctxt_   = false;
+  bool                       established_ = false;
+  bool                       have_sizes_  = false;
+  SecPkgContext_StreamSizes  sizes_;
+  std::vector<unsigned char> enc_in_;
+  std::vector<unsigned char> enc_out_;
+};
+
+class SchannelServerCtx : public TlsServerCtx {
+public:
+  ~SchannelServerCtx() override
+  {
+    if (have_cred_) {
+      FreeCredentialsHandle(&cred_);
+    }
+    if (cert_ != NULL) {
+      CertFreeCertificateContext(cert_);
+    }
+  }
+
+  bool Init()
+  {
+    SCH_CREDENTIALS creds;
+    SECURITY_STATUS ss;
+    TimeStamp       ts;
+
+    cert_ = MakeSelfSignedCert();
+    if (cert_ == NULL) {
+      return false;
+    }
+
+    memset(&creds, 0, sizeof(creds));
+    creds.dwVersion = SCH_CREDENTIALS_VERSION;
+    creds.cCreds    = 1;
+    creds.paCred    = &cert_;
+    creds.dwFlags   = SCH_USE_STRONG_CRYPTO;
+
+    ss = AcquireCredentialsHandleA(NULL, (SEC_CHAR *)UNISP_NAME_A,
+                                   SECPKG_CRED_INBOUND, NULL, &creds, NULL,
+                                   NULL, &cred_, &ts);
+    if (ss != SEC_E_OK) {
+      return false;
+    }
+    have_cred_ = true;
+
+    ca_pem_ = DerToPem(cert_->pbCertEncoded, cert_->cbCertEncoded);
+    return !ca_pem_.empty();
+  }
+
+  std::unique_ptr<TlsServerConn> NewConn() override
+  {
+    return std::unique_ptr<TlsServerConn>(new SchannelServerConn(&cred_));
+  }
+
+  std::string CaPEM() const override
+  {
+    return ca_pem_;
+  }
+
+private:
+  CredHandle     cred_;
+  bool           have_cred_ = false;
+  PCCERT_CONTEXT cert_      = nullptr;
+  std::string    ca_pem_;
+};
+
+}  // namespace
+
+std::unique_ptr<TlsServerCtx> TlsServerCtx::Create()
+{
+  std::unique_ptr<SchannelServerCtx> ctx(new SchannelServerCtx());
+  if (!ctx->Init()) {
+    return nullptr;
+  }
+  return std::unique_ptr<TlsServerCtx>(ctx.release());
+}
+
+}  // namespace test
+}  // namespace ares
+
+#  else  /* no server-side TLS termination for the compiled-in backend */
+
+/* Provide a null factory so the mock DoT tests link and skip gracefully. */
 namespace ares {
 namespace test {
 
@@ -332,6 +736,6 @@ std::unique_ptr<TlsServerCtx> TlsServerCtx::Create()
 }  // namespace test
 }  // namespace ares
 
-#  endif /* CARES_CRYPTO_OPENSSL */
+#  endif /* CARES_CRYPTO_OPENSSL / CARES_CRYPTO_SCHANNEL */
 
 #endif   /* CARES_USE_CRYPTO */

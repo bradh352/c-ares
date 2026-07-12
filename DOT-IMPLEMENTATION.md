@@ -515,11 +515,13 @@ accept/reject) already exists; these exercise the integrated stack.
       - [x] **OpenSSL server impl** — memory-BIO driven; 4 tests green
         locally and on the OpenSSL CI legs (these now actually run DoT on
         Windows/MSVC+OpenSSL too, not just compile it).
-      - [ ] **Schannel server impl** — `AcceptSecurityContext` +
-        Encrypt/DecryptMessage server side (self-signed cert via
-        `CertCreateSelfSignCertificate`), so the MSVC Schannel leg runs the
-        same DoT tests against the Schannel client.  Until it lands the
-        mock tests skip on Schannel builds (null factory).
+      - [~] **Schannel server impl** — written: `AcceptSecurityContext` +
+        Encrypt/DecryptMessage server side, self-signed cert via
+        `CertCreateSelfSignCertificate`, PEM export via `CryptBinaryToStringA`
+        for client trust injection; `arestest` links `secur32`/`crypt32` on
+        Schannel builds.  With it, the mock DoT tests now *run* on the MSVC
+        Schannel leg against the Schannel client instead of skipping.
+        Blind-written (no local Windows build) — CI-validated; iterating.
       - [ ] Remaining sub-cases: mid-handshake close, handshake timeout,
         session resumption on a second connection.
 - (Done in Phase 1 — CryptoDoTEarlyData: server observes the 2nd query as
