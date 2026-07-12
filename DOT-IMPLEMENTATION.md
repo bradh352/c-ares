@@ -54,8 +54,8 @@ follow-up PRs for the rest.
   the crypto abstraction against a second implementation.
 - Remaining before the PR is final: the outstanding items in the Phase 1
   subsections (the Schannel backend, a few connection/timeout/EDNS items,
-  the all-event-backend test sweep, live tests, macOS crypto CI leg,
-  adig/man-page docs, and the custom-CA config surface).
+  the all-event-backend test sweep, live tests, macOS crypto CI leg, and
+  adig/man-page docs).
 
 **Follow-up PRs (after Phase 1):**
 - **Server security grouping** — secure servers preferred; no silent
@@ -68,6 +68,9 @@ follow-up PRs for the rest.
   (Android Private DNS, systemd-resolved read directly, macOS/iOS, …);
   research complete, findings in the OS DoT config section below.  Includes
   DDR (RFC 9462) / DNR (RFC 9463) standards-track auto-discovery.
+- **Configuration flexibility (custom CA)** — a public config surface for
+  custom CA certs (the internal `ares_tls_set_cadata()` already exists);
+  moved out of Phase 1 because the surface design shouldn't gate the first PR.
 - **Client certificates (mTLS)** — authenticate c-ares to the resolver;
   moved out of Phase 1 because the client-key config surface is harder.
 - **Additional crypto backends** — Apple / wolfSSL / rustls / mbedTLS;
@@ -75,8 +78,8 @@ follow-up PRs for the rest.
 - **Overlaps** — #642 domain-specific servers shares the server-grouping
   machinery; #882 URI schemes are the config representation.
 
-Note: some Phase 1 config/test items (custom CA, live tests, etc.) could
-slip to a follow-up PR if the first PR is getting large — decide when
+Note: some Phase 1 test items (live tests, etc.) could slip to a follow-up
+PR if the first PR is getting large — decide when
 sizing it.
 
 ## Current state (what exists on this branch)
@@ -418,21 +421,18 @@ with a TLS scheme.
       (RFC 7828) to hold connections open — c-ares already has an
       idle-connection concept for TCP to piggyback on.
 
-### Configuration flexibility (custom CA, hostname)
+### Verification modes (done in Phase 1)
 
-- [ ] **Custom CA certificate(s)** for validating the resolver, instead of
-      (or in addition to) the system trust store.  The internal
-      `ares_tls_set_cadata()` already exists; needs a public config surface
-      (URI query key like `cafile=`/`cadata=`, and/or an option).  Decide
-      the surface (URI query key vs. new `ares_set_*` API vs. options
-      struct) and any ABI implications.
-- (Done in Phase 1) **Skip / relax hostname validation** via
+- (Done in Phase 1) Strict / opportunistic / default verification per
+  RFC 8310, including relaxing hostname/cert validation via
   `verify=opportunistic` (encrypt without verification).  A
   verify-chain-but-not-name middle mode could still be added if needed.
 
-Client certificates (mTLS) were **moved to a follow-up PR** — the config
-surface for client key material is harder and shouldn't gate Phase 1.  See
-"Client certificates (mTLS)" under Phase 2.
+Broader **configuration flexibility (a public custom-CA surface)** and
+**client certificates (mTLS)** are follow-up work — moved out of Phase 1
+because their config surface is the hard part and shouldn't gate the first
+PR.  See "Configuration flexibility (custom CA)" and "Client certificates
+(mTLS)" under Phase 2.
 
 ### Windows Schannel backend (native, dependency-free)
 
@@ -641,6 +641,19 @@ validation), never to answer user queries.
 - Entangled with OS config reading (which is what produces IP-only /
   hostname-only entries) and with #642 domain-specific servers, so this
   lands alongside that work rather than standalone.
+
+### Configuration flexibility (custom CA)
+
+Moved out of Phase 1: the internal plumbing exists, but the public config
+surface is a deliberate design that shouldn't gate the first PR.
+
+- [ ] **Custom CA certificate(s)** for validating the resolver, instead of
+      (or in addition to) the system trust store.  The internal
+      `ares_tls_set_cadata()` already exists (and is used by the test
+      harness); this needs a *public* config surface — a URI query key like
+      `cafile=`/`cadata=`, and/or a new `ares_set_*` API or options-struct
+      field.  Decide the surface and any ABI implications, and how it maps
+      per-server (`dns+tls://`) vs. channel-wide.
 
 ### Client certificates (mTLS)
 
