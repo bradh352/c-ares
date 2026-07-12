@@ -333,6 +333,19 @@ public:
   {
     tls_ctx_ = ctx;
   }
+
+  // Injected server misbehavior during the TLS handshake, for testing the
+  // client's error/timeout handling.
+  enum TlsHandshakeMode {
+    kTlsHsNormal = 0,
+    kTlsHsCloseDuringHandshake,  // drop the connection after the first flight
+    kTlsHsStall                  // accept but never respond (client times out)
+  };
+
+  void SetTLSHandshakeMode(TlsHandshakeMode mode)
+  {
+    tls_hs_mode_ = mode;
+  }
 #endif
 
 private:
@@ -367,6 +380,7 @@ private:
 #ifdef CARES_USE_CRYPTO
   std::shared_ptr<test::TlsServerCtx>                           tls_ctx_;
   std::map<ares_socket_t, std::unique_ptr<test::TlsServerConn>> tls_conns_;
+  TlsHandshakeMode tls_hs_mode_ = kTlsHsNormal;
 #endif
 };
 

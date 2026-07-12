@@ -525,8 +525,13 @@ accept/reject) already exists; these exercise the integrated stack.
         verification, custom-CA injection, encrypt/decrypt, connection reuse),
         not just its compile.  Both the client and server SSPI code were
         written without a local Windows toolchain and validated via CI.
-      - [ ] Remaining sub-cases: mid-handshake close, handshake timeout,
-        session resumption on a second connection.
+      - [x] Sub-cases added (run on all three backends via CI): connection
+        reuse (two queries, one connection), mid-handshake close (query
+        fails cleanly), and handshake stall → timeout (`MockServer`
+        injectable `kTlsHsCloseDuringHandshake` / `kTlsHsStall` modes).
+      - [ ] Session resumption *asserted* on a second connection still open
+        — needs server-side handshake-type introspection; connection reuse
+        and close+reconnect are covered.
 - (Done in Phase 1 — CryptoDoTEarlyData: server observes the 2nd query as
   early data, no loss/dup; see the Early Data item there.)  A channel-level
   *reject* variant (fresh server ticket keys) could still be added, though

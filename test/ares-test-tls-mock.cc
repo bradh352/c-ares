@@ -239,6 +239,73 @@ TEST_F(MockDoTServerTest, ServerCloseThenReconnect)
   EXPECT_EQ(ARES_SUCCESS, r2.status_);
 }
 
+/* Two sequential queries reuse the same established TLS connection (no
+ * disconnect between them). */
+TEST_F(MockDoTServerTest, ConnectionReuse)
+{
+  if (!HasBackend()) {
+    GTEST_SKIP() << "no mock DoT server backend for this crypto build";
+  }
+  ASSERT_TRUE(BuildChannel(true, "strict"));
+
+  DNSPacket rsp;
+  rsp.set_response()
+    .set_aa()
+    .add_question(new DNSQuestion("dot.example.com", T_A))
+    .add_answer(new DNSARR("dot.example.com", 100, { 1, 2, 3, 4 }));
+  ON_CALL(*server_, OnRequest("dot.example.com", T_A))
+    .WillByDefault(SetReply(server_.get(), &rsp));
+
+  HostResult r1;
+  ares_gethostbyname(channel_, "dot.example.com", AF_INET, HostCallback, &r1);
+  Process();
+  EXPECT_TRUE(r1.done_);
+  EXPECT_EQ(ARES_SUCCESS, r1.status_);
+
+  /* Second query over the still-open connection */
+  HostResult r2;
+  ares_gethostbyname(channel_, "dot.example.com", AF_INET, HostCallback, &r2);
+  Process();
+  EXPECT_TRUE(r2.done_);
+  EXPECT_EQ(ARES_SUCCESS, r2.status_);
+}
+
+/* Server drops the connection mid-handshake: the query must fail cleanly,
+ * not hang or fall back to plaintext. */
+TEST_F(MockDoTServerTest, MidHandshakeClose)
+{
+  if (!HasBackend()) {
+    GTEST_SKIP() << "no mock DoT server backend for this crypto build";
+  }
+  ASSERT_TRUE(BuildChannel(true, "strict"));
+  server_->SetTLSHandshakeMode(MockServer::kTlsHsCloseDuringHandshake);
+
+  HostResult result;
+  ares_gethostbyname(channel_, "dot.example.com", AF_INET, HostCallback,
+                     &result);
+  Process();
+  EXPECT_TRUE(result.done_);
+  EXPECT_NE(ARES_SUCCESS, result.status_);
+}
+
+/* Server accepts but never responds to the ClientHello: the handshake must
+ * time out and the query fail. */
+TEST_F(MockDoTServerTest, HandshakeStallTimeout)
+{
+  if (!HasBackend()) {
+    GTEST_SKIP() << "no mock DoT server backend for this crypto build";
+  }
+  ASSERT_TRUE(BuildChannel(true, "strict"));
+  server_->SetTLSHandshakeMode(MockServer::kTlsHsStall);
+
+  HostResult result;
+  ares_gethostbyname(channel_, "dot.example.com", AF_INET, HostCallback,
+                     &result);
+  Process();
+  EXPECT_TRUE(result.done_);
+  EXPECT_NE(ARES_SUCCESS, result.status_);
+}
+
 }  // namespace test
 }  // namespace ares
 

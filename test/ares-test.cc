@@ -698,6 +698,17 @@ void MockServer::ProcessFD(ares_socket_t fd) {
       test::TlsServerConn *conn = tls_it->second.get();
       conn->FeedCipher(buffer, (size_t)len);
 
+      /* Test-injected server misbehavior during the handshake */
+      if (!conn->Established()) {
+        if (tls_hs_mode_ == kTlsHsStall) {
+          return; /* accept but never respond: client handshake times out */
+        }
+        if (tls_hs_mode_ == kTlsHsCloseDuringHandshake) {
+          CloseConn(fd); /* drop the connection mid-handshake */
+          return;
+        }
+      }
+
       /* Drive the handshake incrementally; each readable event advances it */
       if (!conn->Established()) {
         bool fatal = false;
