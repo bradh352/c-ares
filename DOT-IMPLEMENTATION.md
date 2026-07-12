@@ -35,38 +35,42 @@ dependency added to default builds:
 
 ## Scope overview
 
-The full feature, so the plan visibly covers everything (details in the
-sections below).  This is intent-level scope, not a rigid phase order.
+The full feature, so the plan visibly covers everything.  Delivery is a
+**single Phase 1 PR** (functional DoT + its tests) followed by a couple of
+follow-up PRs for the rest.
 
-**Done and CI-validated:**
+**Phase 1 — the first PR (functional DoT + tests), mostly done:**
 - Crypto abstraction layer + OpenSSL >= 3 backend (handshake, verification,
   session resumption).
 - Functional DoT end to end: `dns+tls://` server config, TLS on the
   connection, SNI + strict/opportunistic verification.
 - Performance: TLS 1.3 Early Data (0-RTT) + TCP Fast Open — warm queries
   cost no extra round trips.
-- Crypto CI legs (Linux/ASAN, MSVC+OpenSSL, MSYS2).
+- Full-stack tests + crypto CI legs (Linux/ASAN, MSVC+OpenSSL, MSYS2).
+- Remaining before the PR is final: the outstanding items in the Phase 1
+  subsections (a few connection/timeout/EDNS items, the all-event-backend
+  test sweep, live tests, macOS crypto CI leg, adig/man-page docs, and the
+  custom-CA / mTLS config surface).
 
-**Remaining scope:**
+**Follow-up PRs (after Phase 1):**
 - **Server security grouping** — secure servers preferred; no silent
   downgrade to plaintext (strict tier + opt-in fallback flag).  Security
   requirement, not a nicety.
 - **Bootstrap resolution** — resolve resolver IP<->hostname over insecure
   servers *only* to enable a secure connection, never to answer user
   queries.
-- **Configuration flexibility** — custom CA cert, client certs (mTLS),
-  hostname-validation modes.
 - **OS DoT config sources** — read the host OS's DoT configuration
-  (Android Private DNS, systemd-resolved read directly, macOS/iOS, …); a
-  research item; findings folded into the OS DoT config section below.
-  Includes DDR (RFC 9462) /
-  DNR (RFC 9463) standards-track auto-discovery.
+  (Android Private DNS, systemd-resolved read directly, macOS/iOS, …);
+  research complete, findings in the OS DoT config section below.  Includes
+  DDR (RFC 9462) / DNR (RFC 9463) standards-track auto-discovery.
 - **Additional crypto backends** — Schannel (dependency-free Windows) and
   others; abstraction already exists.
-- **Testing & docs** — full-stack mock DoT suite, all event backends, live
-  tests, macOS crypto CI leg, man-page / `FEATURES.md` entries.
 - **Overlaps** — #642 domain-specific servers shares the server-grouping
   machinery; #882 URI schemes are the config representation.
+
+Note: some Phase 1 config/test items (custom CA, mTLS, live tests, etc.)
+could slip to a follow-up PR if the first PR is getting large — decide when
+sizing it.
 
 ## Current state (what exists on this branch)
 
@@ -209,7 +213,12 @@ deferred to its phase:
       graceful-close test); the `SSL_connect() == 0` special case is
       folded into the standard error path.
 
-## Phase 1 — Complete the backend (connection integration)
+## Phase 1 — Functional DoT (single PR: backend, connection, config, tests)
+
+Phase 1 is intended to merge as **one PR**: the OpenSSL backend, connection
+integration, `dns+tls://` configuration, and the full-stack tests that
+validate it.  The remaining work (Phase 2 and the sections below) then lands
+as a couple of follow-up PRs.
 
 Goal: a server flagged for TLS completes queries end-to-end (handshake,
 framed query/response, graceful shutdown), with session resumption and early
@@ -250,7 +259,7 @@ Prerequisites (beyond the **[pre-harness]** defect fixes above):
       MSVC leg validates compile/link + the full non-TLS suite under the
       crypto build (the TLS harness is POSIX-only).  All other legs guard
       the no-crypto stubs; `reuse lint` covers new files.  (A macOS crypto
-      leg is still outstanding — tracked in Phase 3.)
+      leg is still outstanding — tracked in the Testing subsection.)
 
 - [x] **Socketpair harness (gtest, `CARES_CRYPTO=ON` leg)** — complete, in
       `test/ares-test-tls.cc` (10 tests): handshake to ESTABLISHED,
@@ -293,9 +302,9 @@ Prerequisites (beyond the **[pre-harness]** defect fixes above):
         remapped event output — plus non-TLS passthrough and unknown-fd /
         zero-event handling.
 
-The Phase 3 mock-DoT-server work then *extends* this harness (same
-runtime-generated CA and server plumbing) rather than starting from scratch;
-Phase 3 also re-exercises the event remapping through the real process loop
+The full-stack tests (see the Testing subsection) *extend* this harness
+(same runtime-generated CA and server plumbing) rather than starting from
+scratch, and re-exercise the event remapping through the real process loop
 across all event backends.
 
 ### Manual configuration (URI scheme)
@@ -413,6 +422,50 @@ private DoT resolver):
 - [ ] Decide the config surface for the above (URI query keys vs. new
       `ares_set_*` API vs. options struct) and the ABI implications.
 
+### Testing (full-stack)
+
+Phase 1 ships as a single PR, so its full-stack tests live here.  The
+Step 0 backend coverage (state machine, resumption, early-data
+accept/reject) already exists; these exercise the integrated stack.
+- [ ] **`ares_conn_interpret_events()` through the real process loop**:
+      Step 0 covers the mapping logic directly; this validates it embedded
+      in `ares_process_fds()` across all event backends via the mock-TLS
+      suite (per-backend timing differences are where remapping bugs
+      surface).  *Partial:* CryptoDoTQuery already runs a real query
+      through the process loop over a TLS connection on the default
+      (select) backend; the all-event-backend sweep remains.
+- [ ] **Mock DoT server**: extend the gmock test server with a TLS
+      variant when built `CARES_CRYPTO=ON`, reusing the Step 0
+      runtime-generated CA/server-cert plumbing, with a test hook to
+      inject the CA (or `verify=none`) into the client ctx.  Covers via
+      real `ares_query()` traffic: handshake, framed query/response,
+      server-initiated close, mid-handshake close, handshake timeout,
+      certificate mismatch in strict vs opportunistic mode, session
+      resumption on second connection.  *Partial:* CryptoDoTQuery (real
+      query + connection reuse) and CryptoDoTVerifyFail (strict cert
+      mismatch, no plaintext fallback) exist via a threaded in-test DoT
+      server; the remaining sub-cases and a gmock-integrated variant
+      remain.
+- (Done in Phase 1 — CryptoDoTEarlyData: server observes the 2nd query as
+  early data, no loss/dup; see the Early Data item there.)  A channel-level
+  *reject* variant (fresh server ticket keys) could still be added, though
+  CryptoTLSEarlyDataReject already pins the no-loss/no-dup contract at the
+  backend level.
+- [ ] **Event-loop integration**: run the mock-TLS suite under all event
+      backends (epoll/kqueue/poll/select/IOCP configurations CI already
+      exercises) — the want-flag remapping is exactly the kind of thing
+      that behaves differently per backend.
+- [ ] **Live tests** (opt-in, like existing live suite): 1.1.1.1 /
+      8.8.8.8 / 9.9.9.9 with their hostnames, strict mode.
+- (Done in Phase 1 — see the CI item under Step 0.)  Remaining CI: a macOS
+  crypto leg (Security-framework root loading is only compile-checked today
+  via local dev builds).
+- [ ] **Fuzzing**: framing above TLS is the existing TCP framing (already
+      fuzzed); no new parser surface expected.  Revisit if a config-string
+      surface (URI query keys) grows — extend the existing URI fuzzing
+      if/where applicable.
+
+
 ## Session ticket / single-use design notes
 
 Recorded from analysis (2026-07-09) so the rationale isn't lost:
@@ -510,49 +563,6 @@ validation), never to answer user queries.
 - Entangled with OS config reading (which is what produces IP-only /
   hostname-only entries) and with #642 domain-specific servers, so this
   lands alongside that work rather than standalone.
-
-## Phase 3 — Testing (full-stack; extends the Phase 1 Step 0 harness)
-
-Backend-level coverage (state machine, resumption, early data accept/reject)
-already exists from Phase 1 Step 0; this phase covers the integrated stack.
-
-- [ ] **`ares_conn_interpret_events()` through the real process loop**:
-      Step 0 covers the mapping logic directly; this validates it embedded
-      in `ares_process_fds()` across all event backends via the mock-TLS
-      suite (per-backend timing differences are where remapping bugs
-      surface).  *Partial:* CryptoDoTQuery already runs a real query
-      through the process loop over a TLS connection on the default
-      (select) backend; the all-event-backend sweep remains.
-- [ ] **Mock DoT server**: extend the gmock test server with a TLS
-      variant when built `CARES_CRYPTO=ON`, reusing the Step 0
-      runtime-generated CA/server-cert plumbing, with a test hook to
-      inject the CA (or `verify=none`) into the client ctx.  Covers via
-      real `ares_query()` traffic: handshake, framed query/response,
-      server-initiated close, mid-handshake close, handshake timeout,
-      certificate mismatch in strict vs opportunistic mode, session
-      resumption on second connection.  *Partial:* CryptoDoTQuery (real
-      query + connection reuse) and CryptoDoTVerifyFail (strict cert
-      mismatch, no plaintext fallback) exist via a threaded in-test DoT
-      server; the remaining sub-cases and a gmock-integrated variant
-      remain.
-- (Done in Phase 1 — CryptoDoTEarlyData: server observes the 2nd query as
-  early data, no loss/dup; see the Early Data item there.)  A channel-level
-  *reject* variant (fresh server ticket keys) could still be added, though
-  CryptoTLSEarlyDataReject already pins the no-loss/no-dup contract at the
-  backend level.
-- [ ] **Event-loop integration**: run the mock-TLS suite under all event
-      backends (epoll/kqueue/poll/select/IOCP configurations CI already
-      exercises) — the want-flag remapping is exactly the kind of thing
-      that behaves differently per backend.
-- [ ] **Live tests** (opt-in, like existing live suite): 1.1.1.1 /
-      8.8.8.8 / 9.9.9.9 with their hostnames, strict mode.
-- (Done in Phase 1 — see the CI item under Step 0.)  Remaining CI: a macOS
-  crypto leg (Security-framework root loading is only compile-checked today
-  via local dev builds).
-- [ ] **Fuzzing**: framing above TLS is the existing TCP framing (already
-      fuzzed); no new parser surface expected.  Revisit if a config-string
-      surface (URI query keys) grows — extend the existing URI fuzzing
-      if/where applicable.
 
 ## Open questions / decisions to make
 
@@ -1051,6 +1061,12 @@ a DoT server that c-ares then reads via Tier 1.
 
 Newest first.
 
+- 2026-07-12: restructured around delivery: Phase 1 is a single PR
+  (backend + connection + `dns+tls://` config + full-stack tests), so the
+  former "Phase 3 — Testing" section was folded into Phase 1 as a
+  "Testing (full-stack)" subsection, and "Configuration flexibility" moved
+  into Phase 1 too.  Phase 2 and the trailing sections are the follow-up
+  PRs.  Scope overview and Phase 1 header updated to say so.
 - 2026-07-12: reorganized the plan so completed items live in the phase
   where they were actually done.  Moved the whole "Manual configuration
   (URI scheme)" subsection into Phase 1 (it's foundational -- nothing is
@@ -1193,7 +1209,7 @@ Newest first.
   Simplified after review: no I/O seam needed (a minimal fake conn around a
   socketpair drives the production BIO->conn->socket path directly); no
   separate session-cache/interpret_events unit tests (covered by the
-  harness resumption tests and the Phase 3 full-stack tests respectively);
+  harness resumption tests and the full-stack Testing subsection respectively);
   live smoke check dropped.
 - 2026-07-08: branch squashed onto current main (`513601c3`); this
   document added.  State: building blocks only, feature inert; defect list
