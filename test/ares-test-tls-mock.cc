@@ -467,6 +467,42 @@ INSTANTIATE_TEST_SUITE_P(EventBackends, MockDoTEventThreadTest,
                          ::testing::ValuesIn(ares::test::evsys_families),
                          DoTPrintEvsysFamily);
 
+/* Opt-in live tests against real public DoT resolvers.  DISABLED_ so they
+ * never run (or flake) in CI -- they need outbound TCP/853 and the system
+ * trust store.  Run explicitly, e.g.:
+ *   arestest --gtest_also_run_disabled_tests --gtest_filter='*LiveDoT*'
+ */
+static void LiveDoTQuery(const char *csv)
+{
+  ares_channel_t *channel = nullptr;
+  ASSERT_EQ(ARES_SUCCESS, ares_init(&channel));
+  ASSERT_EQ(ARES_SUCCESS, ares_set_servers_csv(channel, csv));
+
+  HostResult result;
+  ares_gethostbyname(channel, "example.com", AF_INET, HostCallback, &result);
+  ProcessWork(channel, NoExtraFDs, nullptr);
+  EXPECT_TRUE(result.done_);
+  EXPECT_EQ(ARES_SUCCESS, result.status_) << "server: " << csv;
+  EXPECT_FALSE(result.host_.addrs_.empty());
+
+  ares_destroy(channel);
+}
+
+TEST_F(LibraryTest, DISABLED_LiveDoTCloudflareStrict)
+{
+  LiveDoTQuery("dns+tls://1.1.1.1?hostname=one.one.one.one&verify=strict");
+}
+
+TEST_F(LibraryTest, DISABLED_LiveDoTGoogleStrict)
+{
+  LiveDoTQuery("dns+tls://8.8.8.8?hostname=dns.google&verify=strict");
+}
+
+TEST_F(LibraryTest, DISABLED_LiveDoTQuad9Strict)
+{
+  LiveDoTQuery("dns+tls://9.9.9.9?hostname=dns.quad9.net&verify=strict");
+}
+
 }  // namespace test
 }  // namespace ares
 

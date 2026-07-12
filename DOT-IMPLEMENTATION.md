@@ -547,8 +547,11 @@ accept/reject) already exists; these exercise the integrated stack.
       (epoll/kqueue/poll/select/IOCP) via `ares::test::evsys_families`, on
       all three crypto backends through CI — the want-flag remapping is
       exactly the kind of thing that behaves differently per backend.
-- [ ] **Live tests** (opt-in, like existing live suite): 1.1.1.1 /
-      8.8.8.8 / 9.9.9.9 with their hostnames, strict mode.
+- [x] **Live tests** (opt-in): `DISABLED_LiveDoT*` query example.com over
+      real DoT against 1.1.1.1 / 8.8.8.8 / 9.9.9.9 with their hostnames in
+      strict mode (system trust store).  `DISABLED_` so they never run or
+      flake in CI; run with `--gtest_also_run_disabled_tests
+      --gtest_filter='*LiveDoT*'`.  Verified passing against all three.
 - (Done in Phase 1 — see the CI item under Step 0.)  Remaining CI: a macOS
   crypto leg (Security-framework root loading is only compile-checked today
   via local dev builds).
