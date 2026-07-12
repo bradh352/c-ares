@@ -394,6 +394,25 @@ with a TLS scheme.
       (RFC 7828) to hold connections open — c-ares already has an
       idle-connection concept for TCP to piggyback on.
 
+### Configuration flexibility (custom CA, client certs / mTLS, hostname)
+
+Captured from issue #818 intent and a concrete user request (mTLS to a
+private DoT resolver):
+
+- [ ] **Custom CA certificate(s)** for validating the resolver, instead of
+      (or in addition to) the system trust store.  The internal
+      `ares_tls_set_cadata()` already exists; needs a public config surface
+      (URI query key like `cafile=`/`cadata=`, and/or an option).
+- [ ] **Client certificates (mTLS)** to authenticate c-ares to the
+      upstream resolver — requested in #818.  Needs cert+key config plumbed
+      into the backend (`SSL_CTX_use_certificate`/`_PrivateKey` on the
+      client side) and a config surface.
+- (Done in Phase 1) **Skip / relax hostname validation** via
+  `verify=opportunistic` (encrypt without verification).  A
+  verify-chain-but-not-name middle mode could still be added if needed.
+- [ ] Decide the config surface for the above (URI query keys vs. new
+      `ares_set_*` API vs. options struct) and the ABI implications.
+
 ## Session ticket / single-use design notes
 
 Recorded from analysis (2026-07-09) so the rationale isn't lost:
@@ -491,25 +510,6 @@ validation), never to answer user queries.
 - Entangled with OS config reading (which is what produces IP-only /
   hostname-only entries) and with #642 domain-specific servers, so this
   lands alongside that work rather than standalone.
-
-### Configuration flexibility (custom CA, client certs / mTLS, hostname)
-
-Captured from issue #818 intent and a concrete user request (mTLS to a
-private DoT resolver):
-
-- [ ] **Custom CA certificate(s)** for validating the resolver, instead of
-      (or in addition to) the system trust store.  The internal
-      `ares_tls_set_cadata()` already exists; needs a public config surface
-      (URI query key like `cafile=`/`cadata=`, and/or an option).
-- [ ] **Client certificates (mTLS)** to authenticate c-ares to the
-      upstream resolver — requested in #818.  Needs cert+key config plumbed
-      into the backend (`SSL_CTX_use_certificate`/`_PrivateKey` on the
-      client side) and a config surface.
-- (Done in Phase 1) **Skip / relax hostname validation** via
-  `verify=opportunistic` (encrypt without verification).  A
-  verify-chain-but-not-name middle mode could still be added if needed.
-- [ ] Decide the config surface for the above (URI query keys vs. new
-      `ares_set_*` API vs. options struct) and the ABI implications.
 
 ## Phase 3 — Testing (full-stack; extends the Phase 1 Step 0 harness)
 
