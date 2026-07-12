@@ -515,13 +515,16 @@ accept/reject) already exists; these exercise the integrated stack.
       - [x] **OpenSSL server impl** — memory-BIO driven; 4 tests green
         locally and on the OpenSSL CI legs (these now actually run DoT on
         Windows/MSVC+OpenSSL too, not just compile it).
-      - [~] **Schannel server impl** — written: `AcceptSecurityContext` +
+      - [x] **Schannel server impl** — `AcceptSecurityContext` +
         Encrypt/DecryptMessage server side, self-signed cert via
         `CertCreateSelfSignCertificate`, PEM export via `CryptBinaryToStringA`
         for client trust injection; `arestest` links `secur32`/`crypt32` on
-        Schannel builds.  With it, the mock DoT tests now *run* on the MSVC
-        Schannel leg against the Schannel client instead of skipping.
-        Blind-written (no local Windows build) — CI-validated; iterating.
+        Schannel builds.  **All 4 DoT tests run and pass on the MSVC Schannel
+        leg** against the Schannel client — this functionally validates the
+        Schannel *client* backend end to end (handshake, strict + opportunistic
+        verification, custom-CA injection, encrypt/decrypt, connection reuse),
+        not just its compile.  Both the client and server SSPI code were
+        written without a local Windows toolchain and validated via CI.
       - [ ] Remaining sub-cases: mid-handshake close, handshake timeout,
         session resumption on a second connection.
 - (Done in Phase 1 — CryptoDoTEarlyData: server observes the 2nd query as
@@ -1163,7 +1166,21 @@ a DoT server that c-ares then reads via Tier 1.
 
 Newest first.
 
-- 2026-07-12: Schannel client backend now compiles and links clean on the
+- 2026-07-12: **Schannel client backend now functionally validated on CI.**
+  Added the Schannel *server* endpoint to the mock DoT server
+  (`AcceptSecurityContext` + Encrypt/DecryptMessage, self-signed cert via
+  `CertCreateSelfSignCertificate`), so the 4 focused DoT edge-case tests
+  run Schannel-client-vs-Schannel-server on the MSVC Schannel leg — all
+  pass (query, strict verify-fail, opportunistic, server-close+reconnect).
+  This exercises the whole Schannel client path (handshake, strict +
+  opportunistic verification, custom-CA injection via `ares_tls_set_cadata`,
+  encrypt/decrypt, connection reuse) end to end.  Both the client and server
+  SSPI code were written with no local Windows toolchain and validated
+  purely through CI.  Also: OpenSSL server impl + Windows OpenSSL DoT tests
+  green; the X509 subject-name generator was corrected to build a fresh
+  `X509_NAME` + setter instead of mutating the const internal name (invalid
+  on OpenSSL 4.0).  Moved the public custom-CA config surface to Phase 2.
+- 2026-07-12: Schannel client backend compiles and links clean on the
   MSVC Schannel CI leg (needed `<winternl.h>` for the modern schannel.h
   TLS 1.3 structs).  Added a **gmock-integrated, backend-agnostic mock DoT
   server**: `MockServer` optionally terminates TLS via an in-memory,
