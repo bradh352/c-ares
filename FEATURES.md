@@ -5,6 +5,7 @@
 - [Query Cache](#query-cache)
 - [DNS 0x20 Query Name Case Randomization](#dns-0x20-query-name-case-randomization)
 - [DNS Cookies](#dns-cookies)
+- [DNS-over-TLS (DoT)](#dns-over-tls-dot)
 - [TCP FastOpen (0-RTT)](#tcp-fastopen-0-rtt)
 - [Event Thread](#event-thread)
 - [System Configuration Change Monitoring](#system-configuration-change-monitoring)
@@ -157,6 +158,50 @@ by default.
 
 This feature requires the c-ares channel to persist for the lifetime of the
 application.
+
+
+## DNS-over-TLS (DoT)
+
+DNS-over-TLS, defined in
+[RFC7858](https://datatracker.ietf.org/doc/html/rfc7858), carries DNS over a
+TLS-encrypted TCP connection on port 853, protecting queries and responses
+from eavesdropping and tampering on the wire.
+
+DoT is an optional build-time feature enabled with the `CARES_CRYPTO` CMake
+option (or `--enable-cares-crypto` for autotools); it is off by default.
+
+A server is configured for DoT with the `dns+tls://` scheme in the server
+configuration string, for example via `ares_set_servers_csv()`:
+
+```
+dns+tls://1.1.1.1?hostname=one.one.one.one&verify=strict
+```
+
+The `hostname` query parameter supplies the authentication name used for SNI
+and certificate name verification.  The `verify` parameter selects the
+verification mode (per [RFC8310](https://datatracker.ietf.org/doc/html/rfc8310)):
+
+- `strict` — verify the certificate chain, and the authentication name when
+  one is configured; fail the connection otherwise.
+- `opportunistic` — encrypt but perform no certificate verification.
+- `default` (the default) — `strict` when an authentication name is
+  configured, `opportunistic` otherwise.
+
+Secure connections are established over TLS 1.2 or later, and session
+resumption is used to avoid a full handshake on reconnect.
+
+### Crypto backends
+
+The TLS implementation is provided by a pluggable crypto backend selected at
+configure time with `CARES_CRYPTO_BACKEND` (`auto`, `openssl`, or
+`schannel`).  The default, `auto`, selects the native Windows **Schannel**
+backend on Windows (so DoT works with no external dependency) and
+**OpenSSL** (>= 3.0) everywhere else.
+
+TLS 1.3 Early Data (0-RTT), which lets a resumed connection carry its first
+query without an extra round trip, is available **only with the OpenSSL
+backend**; Schannel does not expose a client-side early-data primitive.  A
+Schannel connection performs an ordinary 1-RTT handshake instead.
 
 
 ## TCP FastOpen (0-RTT)

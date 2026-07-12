@@ -347,11 +347,12 @@ with a TLS scheme.
       'dns+tls://1.1.1.1?hostname=one.one.one.one' example.com` returns a
       correct NOERROR answer over the encrypted channel.  (adig doc note
       still to add.)
-- [ ] Docs: `ares_set_servers_csv.3` scheme table; adig `dns+tls://` note;
-      `FEATURES.md` entry.  Include a **crypto-backend note**: OpenSSL vs.
-      Schannel selection (`CARES_CRYPTO_BACKEND`, auto-selects Schannel on
-      Windows), and that **TLS 1.3 0-RTT early data is available only with
-      the OpenSSL backend** — Schannel does not support it.
+- [~] Docs.
+      - [x] `FEATURES.md` "DNS-over-TLS (DoT)" section: `dns+tls://` scheme,
+        `hostname`/`verify` params, verify modes, session resumption, and the
+        **crypto-backend note** (`CARES_CRYPTO_BACKEND` auto-selects Schannel
+        on Windows / OpenSSL elsewhere; **0-RTT is OpenSSL-only**).
+      - [ ] `ares_set_servers_csv.3` scheme table + adig `dns+tls://` note.
 
 ### Connection integration
 
