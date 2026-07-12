@@ -355,7 +355,11 @@ with a TLS scheme.
         `hostname`/`verify` params, verify modes, session resumption, and the
         **crypto-backend note** (`CARES_CRYPTO_BACKEND` auto-selects Schannel
         on Windows / OpenSSL elsewhere; **0-RTT is OpenSSL-only**).
-      - [ ] `ares_set_servers_csv.3` scheme table + adig `dns+tls://` note.
+      - [x] `ares_set_servers_csv.3`: documented the `verify` query
+        parameter (strict/opportunistic/default, RFC 8310) + example; adig
+        `@server` note points at the `dns+tls://` URI form and the full
+        syntax.  (`dns+tls://`, `hostname`, `ipaddr`, port 853 were already
+        documented.)
 
 ### Connection integration
 
