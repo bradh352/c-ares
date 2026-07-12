@@ -516,6 +516,7 @@ static ares_conn_err_t schan_handshake(ares_tls_t *tls, ares_bool_t post)
     unsigned long   ret_flags = 0;
     ares_bool_t     initial   = (tls->have_ctxt ? ARES_FALSE : ARES_TRUE);
     ares_conn_err_t ferr;
+    ares_conn_err_t rerr;
 
     /* Flush any pending output before generating more */
     ferr = schan_flush(tls);
@@ -529,7 +530,7 @@ static ares_conn_err_t schan_handshake(ares_tls_t *tls, ares_bool_t post)
 
     /* Every non-initial step needs inbound data */
     if (!initial && tls->enc_in_len == 0) {
-      ares_conn_err_t rerr = schan_fill(tls);
+      rerr = schan_fill(tls);
       if (rerr == ARES_CONN_ERR_WOULDBLOCK) {
         tls->flags |= ARES_TLS_SF_READ_WANTREAD | ARES_TLS_SF_WRITE_WANTREAD;
         return rerr;
@@ -588,15 +589,13 @@ static ares_conn_err_t schan_handshake(ares_tls_t *tls, ares_bool_t post)
       if (ferr != ARES_CONN_ERR_SUCCESS) {
         return ferr;
       }
-      {
-        ares_conn_err_t rerr = schan_fill(tls);
-        if (rerr == ARES_CONN_ERR_WOULDBLOCK) {
-          tls->flags |= ARES_TLS_SF_READ_WANTREAD | ARES_TLS_SF_WRITE_WANTREAD;
-          return rerr;
-        }
-        if (rerr != ARES_CONN_ERR_SUCCESS) {
-          return rerr;
-        }
+      rerr = schan_fill(tls);
+      if (rerr == ARES_CONN_ERR_WOULDBLOCK) {
+        tls->flags |= ARES_TLS_SF_READ_WANTREAD | ARES_TLS_SF_WRITE_WANTREAD;
+        return rerr;
+      }
+      if (rerr != ARES_CONN_ERR_SUCCESS) {
+        return rerr;
       }
       continue;
     }
@@ -748,6 +747,7 @@ ares_conn_err_t ares_tlsimp_read(ares_tls_t *tls, unsigned char *buf,
       size_t          i;
       SecBuffer      *pdata  = NULL;
       SecBuffer      *pextra = NULL;
+      ares_conn_err_t herr;
 
       if (tls->enc_in_len == 0) {
         ares_conn_err_t rerr = schan_fill(tls);
@@ -813,16 +813,14 @@ ares_conn_err_t ares_tlsimp_read(ares_tls_t *tls, unsigned char *buf,
         }
         schan_enc_in_keep_tail(tls, extra);
         tls->in_post_handshake = ARES_TRUE;
-        {
-          ares_conn_err_t herr = schan_handshake(tls, ARES_TRUE);
-          if (herr == ARES_CONN_ERR_WOULDBLOCK) {
-            return herr;
-          }
-          if (herr != ARES_CONN_ERR_SUCCESS) {
-            return herr;
-          }
-          tls->in_post_handshake = ARES_FALSE;
+        herr = schan_handshake(tls, ARES_TRUE);
+        if (herr == ARES_CONN_ERR_WOULDBLOCK) {
+          return herr;
         }
+        if (herr != ARES_CONN_ERR_SUCCESS) {
+          return herr;
+        }
+        tls->in_post_handshake = ARES_FALSE;
         continue;
       }
 
