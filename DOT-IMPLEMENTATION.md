@@ -244,6 +244,13 @@ Prerequisites (beyond the **[pre-harness]** defect fixes above):
       since the harness is what demonstrates the session refcount leak).
       Use ECDSA P-256 for generated test certs so the current security
       level 3 setting is satisfied regardless of how that decision lands.
+- [x] **CI legs** (`CARES_CRYPTO=ON`, on every push via draft PR #1252):
+      Ubuntu (build+test incl. containers, Werror) + Ubuntu ASAN, MSYS2
+      MINGW64/CLANG64 (mingw openssl), and MSVC x64 (choco OpenSSL) — the
+      MSVC leg validates compile/link + the full non-TLS suite under the
+      crypto build (the TLS harness is POSIX-only).  All other legs guard
+      the no-crypto stubs; `reuse lint` covers new files.  (A macOS crypto
+      leg is still outstanding — tracked in Phase 3.)
 
 - [x] **Socketpair harness (gtest, `CARES_CRYPTO=ON` leg)** — complete, in
       `test/ares-test-tls.cc` (10 tests): handshake to ESTABLISHED,
@@ -290,6 +297,40 @@ The Phase 3 mock-DoT-server work then *extends* this harness (same
 runtime-generated CA and server plumbing) rather than starting from scratch;
 Phase 3 also re-exercises the event remapping through the real process loop
 across all event backends.
+
+### Manual configuration (URI scheme)
+
+The manual `dns+tls://` server config is foundational to Phase 1 -- nothing
+is configurable or testable without it -- so it lives here rather than in
+the later config-hookup phase.  `ares_set_servers_csv()` already accepts
+`dns://host:port?tcpport=N` URIs (parsed by `parse_nameserver_uri()` via
+`ares_uri`, written back by `ares_get_server_addr_uri()`); this extends it
+with a TLS scheme.
+
+- [x] Scheme **`dns+tls://`**, default port 853.  Query keys:
+  - `hostname=<name>` — authentication name (SNI + certificate
+    verification); presence implies strict mode.
+  - `verify=strict|opportunistic` — explicit profile override
+    (opportunistic = encrypt without certificate verification; this is the
+    "none" intent, so no separate `none` value was added).
+  - Example: `dns+tls://1.1.1.1?hostname=one.one.one.one`.  IP is still the
+    URI host (c-ares dials IPs, never resolves a resolver name via itself);
+    link-local `%iface` continues to work.  Rejected up front
+    (`ARES_ENOTIMP`) when built without crypto.
+- [x] Round-trip: `ares_get_servers_csv()` emits `dns+tls://` for TLS
+      servers (`ares_server_use_uri()` extended), pinned by
+      TLSServerConfigCSV.
+- [x] Duplicate-server detection / server sort treats
+      `(ip, port, tls, verify, hostname)` as the identity
+      (`ares_server_tls_match` / `ares_sconfig_tls_match`).
+- [x] Public API surface beyond CSV: **none** required (options struct
+      untouched -> no ABI concern).  A channel-level "opportunistic TLS for
+      all servers" knob can come later.
+- [ ] `adig -s dns+tls://...` works for free via CSV parsing (untested
+      end-to-end against a live DoT server); add a note to adig docs.
+- [ ] Docs: `ares_set_servers_csv.3` scheme table; `FEATURES.md` entry.
+
+### Connection integration
 
 - [x] **Server-level TLS configuration** in `ares_server_t` /
       `ares_sconfig_t`: `use_tls`, `tls_hostname` (auth name), `tls_verify`
@@ -390,35 +431,6 @@ Recorded from analysis (2026-07-09) so the rationale isn't lost:
 
 ## Phase 2 — Configuration hookup
 
-### Manual configuration (URI scheme)
-
-`ares_set_servers_csv()` already accepts `dns://host:port?tcpport=N` URIs
-(parsed by `parse_nameserver_uri()` via `ares_uri`, written back by
-`ares_get_server_addr_uri()`).  Extend with a TLS scheme:
-
-- [x] Scheme **`dns+tls://`**, default port 853.  Implemented query keys:
-  - `hostname=<name>` — authentication name (SNI + certificate
-    verification); presence implies strict mode.
-  - `verify=strict|opportunistic` — explicit profile override
-    (opportunistic = encrypt without certificate verification; this is
-    the "none" intent, so no separate `none` value was added).
-  - Example: `dns+tls://1.1.1.1?hostname=one.one.one.one`
-  - IP is still the URI host (c-ares dials IPs, never resolves a resolver
-    name via itself); link-local `%iface` continues to work.  Rejected up
-    front (`ARES_ENOTIMP`) when built without crypto.
-- [x] Round-trip: `ares_get_servers_csv()` emits `dns+tls://` for TLS
-      servers (`ares_server_use_uri()` extended), pinned by
-      TLSServerConfigCSV.
-- [x] Duplicate-server detection / server sort treats
-      `(ip, port, tls, verify, hostname)` as the identity
-      (`ares_server_tls_match` / `ares_sconfig_tls_match`).
-- [x] Decide public API surface beyond CSV: **none** required (options
-      struct untouched -> no ABI concern).  A channel-level
-      "opportunistic TLS for all servers" knob can come later.
-- [ ] `adig -s dns+tls://...` works for free via CSV parsing (untested
-      end-to-end against a live DoT server); add a note to adig docs.
-- [ ] Docs: `ares_set_servers_csv.3` scheme table; `FEATURES.md` entry.
-
 ### Host OS configuration
 
 Reading the host OS's DoT configuration is a substantial research +
@@ -493,9 +505,9 @@ private DoT resolver):
       upstream resolver — requested in #818.  Needs cert+key config plumbed
       into the backend (`SSL_CTX_use_certificate`/`_PrivateKey` on the
       client side) and a config surface.
-- [x] **Skip / relax hostname validation** — already available as
-      `verify=opportunistic` (encrypt without verification); a
-      verify-chain-but-not-name middle mode could be added if needed.
+- (Done in Phase 1) **Skip / relax hostname validation** via
+  `verify=opportunistic` (encrypt without verification).  A
+  verify-chain-but-not-name middle mode could still be added if needed.
 - [ ] Decide the config surface for the above (URI query keys vs. new
       `ares_set_*` API vs. options struct) and the ABI implications.
 
@@ -523,30 +535,20 @@ already exists from Phase 1 Step 0; this phase covers the integrated stack.
       mismatch, no plaintext fallback) exist via a threaded in-test DoT
       server; the remaining sub-cases and a gmock-integrated variant
       remain.
-- [x] **Early data through the channel**: CryptoDoTEarlyData verifies the
-      second connection sends the query as early data (server-side
-      `SSL_read_early_data()` observes exactly one early query), the answer
-      is correct, and no query is lost or duplicated (2 accepts, 2 queries
-      total).  The rejection→replay contract is covered at the backend
-      level by CryptoTLSEarlyDataReject; a channel-level reject variant
-      (fresh server ticket keys) could be added but the backend test
-      already pins the no-loss/no-dup behavior.
+- (Done in Phase 1 — CryptoDoTEarlyData: server observes the 2nd query as
+  early data, no loss/dup; see the Early Data item there.)  A channel-level
+  *reject* variant (fresh server ticket keys) could still be added, though
+  CryptoTLSEarlyDataReject already pins the no-loss/no-dup contract at the
+  backend level.
 - [ ] **Event-loop integration**: run the mock-TLS suite under all event
       backends (epoll/kqueue/poll/select/IOCP configurations CI already
       exercises) — the want-flag remapping is exactly the kind of thing
       that behaves differently per backend.
 - [ ] **Live tests** (opt-in, like existing live suite): 1.1.1.1 /
       8.8.8.8 / 9.9.9.9 with their hostnames, strict mode.
-- [x] **CI**: `CARES_CRYPTO=ON` legs running on every push via draft PR
-      #1252: Ubuntu (build+test incl. containers, Werror) + Ubuntu ASAN,
-      MSYS2 MINGW64/CLANG64 (mingw openssl), and MSVC x64
-      (choco OpenSSL) — the MSVC leg validates compile/link and the full
-      non-TLS suite under the crypto build since the TLS harness is
-      POSIX-only.  All other legs keep guarding the no-crypto stubs.
-      Remaining: macOS crypto leg (Security-framework root loading is
-      only compile-checked today via local dev builds); nmake/static
-      makefiles stay stub-only by design.  `reuse lint` covers new files
-      via the existing job.
+- (Done in Phase 1 — see the CI item under Step 0.)  Remaining CI: a macOS
+  crypto leg (Security-framework root loading is only compile-checked today
+  via local dev builds).
 - [ ] **Fuzzing**: framing above TLS is the existing TCP framing (already
       fuzzed); no new parser surface expected.  Revisit if a config-string
       surface (URI query keys) grows — extend the existing URI fuzzing
@@ -1049,6 +1051,13 @@ a DoT server that c-ares then reads via Tier 1.
 
 Newest first.
 
+- 2026-07-12: reorganized the plan so completed items live in the phase
+  where they were actually done.  Moved the whole "Manual configuration
+  (URI scheme)" subsection into Phase 1 (it's foundational -- nothing is
+  configurable or testable without it); moved the CI-legs item into Phase 1
+  Step 0 and the channel-level early-data test note into Phase 1's Early
+  Data item.  Phase 2/3 now contain only remaining work (no completed
+  boxes).
 - 2026-07-12: merged the standalone OS DoT config research
   (`DOT-OS-CONFIG.md`) into this document as the "Research findings"
   subsection under "OS DoT configuration sources"; removed the separate
