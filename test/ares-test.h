@@ -346,6 +346,17 @@ public:
   {
     tls_hs_mode_ = mode;
   }
+
+  // Count of completed TLS handshakes that were full vs. resumed sessions.
+  int TLSFullHandshakes() const
+  {
+    return tls_full_handshakes_;
+  }
+
+  int TLSResumedHandshakes() const
+  {
+    return tls_resumed_handshakes_;
+  }
 #endif
 
 private:
@@ -380,7 +391,9 @@ private:
 #ifdef CARES_USE_CRYPTO
   std::shared_ptr<test::TlsServerCtx>                           tls_ctx_;
   std::map<ares_socket_t, std::unique_ptr<test::TlsServerConn>> tls_conns_;
-  TlsHandshakeMode tls_hs_mode_ = kTlsHsNormal;
+  TlsHandshakeMode tls_hs_mode_            = kTlsHsNormal;
+  int              tls_full_handshakes_    = 0;
+  int              tls_resumed_handshakes_ = 0;
 #endif
 };
 

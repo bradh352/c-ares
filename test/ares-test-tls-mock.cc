@@ -81,12 +81,13 @@ public:
 
   /* Build a channel pointed at the mock DoT server.  trust=true injects the
    * server's CA into the client trust store; verify selects the URI
-   * verification mode. */
-  bool BuildChannel(bool trust, const char *verify)
+   * verification mode; hostname (optional) sets SNI / the session-cache key. */
+  bool BuildChannel(bool trust, const char *verify,
+                    const char *hostname = nullptr)
   {
     struct ares_options opts;
     int                 optmask = 0;
-    char                csv[160];
+    char                csv[192];
 
     memset(&opts, 0, sizeof(opts));
     /* Deterministic: no search domains, short timeout, no query cache */
@@ -112,8 +113,13 @@ public:
       }
     }
 
-    snprintf(csv, sizeof(csv), "dns+tls://127.0.0.1:%u?verify=%s",
-             (unsigned int)server_->tcpport(), verify);
+    if (hostname != nullptr) {
+      snprintf(csv, sizeof(csv), "dns+tls://127.0.0.1:%u?hostname=%s&verify=%s",
+               (unsigned int)server_->tcpport(), hostname, verify);
+    } else {
+      snprintf(csv, sizeof(csv), "dns+tls://127.0.0.1:%u?verify=%s",
+               (unsigned int)server_->tcpport(), verify);
+    }
     return ares_set_servers_csv(channel_, csv) == ARES_SUCCESS;
   }
 
@@ -237,6 +243,47 @@ TEST_F(MockDoTServerTest, ServerCloseThenReconnect)
   Process();
   EXPECT_TRUE(r2.done_);
   EXPECT_EQ(ARES_SUCCESS, r2.status_);
+}
+
+/* The first query establishes and caches a TLS session; after that connection
+ * closes, a second query opens a fresh connection that must resume the cached
+ * session rather than perform another full handshake. */
+TEST_F(MockDoTServerTest, SessionResumption)
+{
+  if (!HasBackend()) {
+    GTEST_SKIP() << "no mock DoT server backend for this crypto build";
+  }
+  /* A hostname gives both backends an SNI / session-cache key; opportunistic
+   * skips the cert-name check (the test cert carries no SAN). */
+  ASSERT_TRUE(BuildChannel(false, "opportunistic", "dot.example.com"));
+
+  DNSPacket rsp;
+  rsp.set_response()
+    .set_aa()
+    .add_question(new DNSQuestion("dot.example.com", T_A))
+    .add_answer(new DNSARR("dot.example.com", 100, { 1, 2, 3, 4 }));
+  ON_CALL(*server_, OnRequest("dot.example.com", T_A))
+    .WillByDefault(SetReply(server_.get(), &rsp));
+
+  /* First query: full handshake, then close so the next query must reconnect */
+  server_->DisconnectAfterReply();
+  HostResult r1;
+  ares_gethostbyname(channel_, "dot.example.com", AF_INET, HostCallback, &r1);
+  Process();
+  ASSERT_TRUE(r1.done_);
+  ASSERT_EQ(ARES_SUCCESS, r1.status_);
+  EXPECT_EQ(1, server_->TLSFullHandshakes());
+  EXPECT_EQ(0, server_->TLSResumedHandshakes());
+
+  /* Second query on a fresh connection must resume the cached session */
+  HostResult r2;
+  ares_gethostbyname(channel_, "dot.example.com", AF_INET, HostCallback, &r2);
+  Process();
+  ASSERT_TRUE(r2.done_);
+  ASSERT_EQ(ARES_SUCCESS, r2.status_);
+  EXPECT_EQ(1, server_->TLSResumedHandshakes())
+    << "second connection did not resume the TLS session";
+  EXPECT_EQ(1, server_->TLSFullHandshakes());
 }
 
 /* Two sequential queries reuse the same established TLS connection (no

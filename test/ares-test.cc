@@ -721,6 +721,12 @@ void MockServer::ProcessFD(ares_socket_t fd) {
         if (!conn->Established()) {
           return; /* need more handshake data */
         }
+        /* Handshake just completed: record whether it resumed a session */
+        if (conn->WasResumed()) {
+          tls_resumed_handshakes_++;
+        } else {
+          tls_full_handshakes_++;
+        }
       }
 
       /* Established: decrypt any application data (a query may already be

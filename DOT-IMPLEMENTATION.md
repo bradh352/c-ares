@@ -266,8 +266,9 @@ Prerequisites (beyond the **[pre-harness]** defect fixes above):
       MINGW64/CLANG64 (mingw openssl), and MSVC x64 (choco OpenSSL) — the
       MSVC leg validates compile/link + the full non-TLS suite under the
       crypto build (the TLS harness is POSIX-only).  All other legs guard
-      the no-crypto stubs; `reuse lint` covers new files.  (A macOS crypto
-      leg is still outstanding — tracked in the Testing subsection.)
+      the no-crypto stubs; `reuse lint` covers new files.  A macOS crypto
+      leg (brew OpenSSL, Werror) now also builds+tests the crypto path and
+      runs the DoT mock tests.
 
 - [x] **Socketpair harness (gtest, `CARES_CRYPTO=ON` leg)** — complete, in
       `test/ares-test-tls.cc` (10 tests): handshake to ESTABLISHED,
@@ -348,7 +349,7 @@ with a TLS scheme.
       'dns+tls://1.1.1.1?hostname=one.one.one.one' example.com` returns a
       correct NOERROR answer over the encrypted channel.  (adig doc note
       still to add.)
-- [~] Docs.
+- [x] Docs.
       - [x] `FEATURES.md` "DNS-over-TLS (DoT)" section: `dns+tls://` scheme,
         `hostname`/`verify` params, verify modes, session resumption, and the
         **crypto-backend note** (`CARES_CRYPTO_BACKEND` auto-selects Schannel
@@ -457,25 +458,31 @@ buffer-out** mode — we feed it TLS records and pump ciphertext through the
 existing `ares_conn_read/write_raw()` paths, exactly like the OpenSSL BIO
 bridge.  No delegation of network I/O to the OS.
 
-- [ ] **Handshake + records** — `InitializeSecurityContext` loop producing
+- [x] **Handshake + records** — `InitializeSecurityContext` loop producing
       the buffer-in/buffer-out token exchange; `EncryptMessage` /
-      `DecryptMessage` for app data.  Map SSPI want-more-input /
-      want-more-output to the same want-read/want-write flags the
-      connection layer already interprets.
-- [ ] **TLS 1.3** — the common SSPI examples are TLS 1.2-era.  1.3 needs
-      correct handling of `SEC_I_RENEGOTIATE` returned by `DecryptMessage`
-      (post-handshake tickets / key update arrive as "renegotiate" and must
-      be fed back through `InitializeSecurityContext`, *not* treated as a
-      real renegotiation).  Requires a recent enough Windows SDK / OS.
-- [ ] **Certificate verification** — validate the server chain against the
-      Windows cert store (`CertGetCertificateChain` /
-      `CertVerifyCertificateChainPolicy` with `SSL_EXTRA` /
-      `CERT_CHAIN_POLICY_SSL`), plus hostname/SNI.  Custom-CA config surface
-      maps to an in-memory `HCERTSTORE`.  Honor the same
-      default/strict/opportunistic `verify` modes.
-- [ ] **Session resumption** — Schannel caches credentials/sessions itself;
-      confirm resumption works across our short-lived connections and that
-      our credential-handle lifetime doesn't defeat it.
+      `DecryptMessage` for app data; SSPI want-more-input / want-more-output
+      mapped to the same want-read/want-write flags the connection layer
+      interprets.  Validated by the DoT tests passing on the MSVC Schannel
+      leg (real query/response over Schannel-to-Schannel TLS).
+- [x] **TLS 1.3** — `SEC_I_RENEGOTIATE` from `DecryptMessage`
+      (post-handshake tickets / key update) is fed back through
+      `InitializeSecurityContext` rather than treated as a real
+      renegotiation; `SCH_CREDENTIALS` (via `<winternl.h>`) lets the OS
+      negotiate TLS 1.3.  Exercised by the DoT tests on the Schannel leg.
+- [x] **Certificate verification** — server chain validated with
+      `CertGetCertificateChain` / `CertVerifyCertificateChainPolicy`
+      (`CERT_CHAIN_POLICY_SSL`) plus hostname/SNI; a custom-CA in-memory
+      `HCERTSTORE` (exclusive-root chain engine) is honored; the same
+      default/strict/opportunistic `verify` modes apply.  Validated by the
+      `VerifyFailStrict` (strict rejects an untrusted cert) and
+      `Opportunistic` DoT tests on the Schannel leg, plus custom-CA
+      injection in the trusted `Query` test.
+- [x] **Session resumption** — Schannel caches sessions internally against
+      the shared credential handle; a second connection to the same target
+      resumes rather than doing a full handshake.  Validated by
+      `MockDoTServerTest.SessionResumption` (server observes conn 1 as a
+      full handshake and conn 2 as a resumed session via
+      `SECPKG_ATTR_SESSION_INFO`) on the Schannel leg.
 - [x] **0-RTT early data — not supported by Schannel (confirmed).**
       Schannel exposes no client-side TLS 1.3 early-data write primitive;
       Microsoft's own MsQuic documentation calls this out and directs
@@ -485,13 +492,12 @@ bridge.  No delegation of network I/O to the OS.
       `ares_conn_write()` and the OpenSSL-vs-Schannel feature note).
       **This asymmetry (0-RTT on OpenSSL platforms only) must be documented
       in the user-facing docs** — see the Phase 1 Docs item.
-- [ ] **Build wiring** — select the backend at configure time
-      (CMake `CARES_CRYPTO`/auto-detect, autotools equivalent); link
-      `secur32`/`crypt32`.  Decide OpenSSL-vs-Schannel default on Windows
-      (likely Schannel when both are available, to be dependency-free).
-- [ ] **CI** — add a Windows Schannel leg (no OpenSSL) so the native path
-      is built and the DoT tests run against it, alongside the existing
-      MSVC+OpenSSL leg.
+- [x] **Build wiring** — `CARES_CRYPTO_BACKEND` selector (CMake + autotools),
+      defaulting to `auto` which picks Schannel on Windows and OpenSSL
+      elsewhere; links `secur32`/`crypt32`.
+- [x] **CI** — a Windows Schannel leg (no OpenSSL) builds the native path
+      and runs the DoT tests against it, alongside the MSVC+OpenSSL leg;
+      both green.
 
 ### Testing (full-stack)
 
@@ -505,7 +511,7 @@ accept/reject) already exists; these exercise the integrated stack.
       parametrized over every event backend the platform supports (kqueue /
       poll / select on macOS/BSD, epoll on Linux, WIN32/IOCP on Windows) ×
       IPv4/IPv6 — where per-backend want-flag remapping bugs would surface.
-- [~] **Mock DoT server** (gmock-integrated, backend-agnostic).  The
+- [x] **Mock DoT server** (gmock-integrated, backend-agnostic).  The
       `MockServer` gained optional TLS termination driven by an in-memory,
       non-blocking server-side TLS endpoint (`test::TlsServerCtx` /
       `TlsServerConn`) so it fits the single-threaded process loop.  The
@@ -534,9 +540,11 @@ accept/reject) already exists; these exercise the integrated stack.
         reuse (two queries, one connection), mid-handshake close (query
         fails cleanly), and handshake stall → timeout (`MockServer`
         injectable `kTlsHsCloseDuringHandshake` / `kTlsHsStall` modes).
-      - [ ] Session resumption *asserted* on a second connection still open
-        — needs server-side handshake-type introspection; connection reuse
-        and close+reconnect are covered.
+      - [x] Session resumption *asserted*: `MockDoTServerTest.SessionResumption`
+        drives two queries with a close between them and asserts (via the
+        server's `WasResumed()` — `SSL_session_reused` on OpenSSL,
+        `SECPKG_ATTR_SESSION_INFO` / `SSL_SESSION_RECONNECT` on Schannel)
+        that connection 1 was a full handshake and connection 2 resumed.
 - (Done in Phase 1 — CryptoDoTEarlyData: server observes the 2nd query as
   early data, no loss/dup; see the Early Data item there.)  A channel-level
   *reject* variant (fresh server ticket keys) could still be added, though
@@ -552,13 +560,15 @@ accept/reject) already exists; these exercise the integrated stack.
       strict mode (system trust store).  `DISABLED_` so they never run or
       flake in CI; run with `--gtest_also_run_disabled_tests
       --gtest_filter='*LiveDoT*'`.  Verified passing against all three.
-- (Done in Phase 1 — see the CI item under Step 0.)  Remaining CI: a macOS
-  crypto leg (Security-framework root loading is only compile-checked today
-  via local dev builds).
-- [ ] **Fuzzing**: framing above TLS is the existing TCP framing (already
-      fuzzed); no new parser surface expected.  Revisit if a config-string
-      surface (URI query keys) grows — extend the existing URI fuzzing
-      if/where applicable.
+- [x] **macOS crypto CI leg** — added to the macOS workflow (brew OpenSSL,
+  Werror); builds+tests the crypto path, exercises the Security.framework
+  trust-anchor loading (previously only compile-checked via local dev
+  builds), and runs the DoT mock tests.  Green.
+- [x] **Fuzzing** (assessed — no new work): the DNS wire parser above TLS is
+      the existing TCP framing, already fuzzed, and TLS adds no new parser on
+      the untrusted-network path.  The `dns+tls://` query keys are
+      application config, not attacker-controlled network input.  Revisit
+      only if a network-facing config surface is added.
 
 
 ## Session ticket / single-use design notes

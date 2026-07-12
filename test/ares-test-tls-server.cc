@@ -211,6 +211,14 @@ public:
     return true;
   }
 
+  bool WasResumed() override
+  {
+    if (ssl_ == nullptr) {
+      return false;
+    }
+    return SSL_session_reused(ssl_) == 1;
+  }
+
 private:
   SSL *ssl_         = nullptr;
   BIO *rbio_        = nullptr;
@@ -529,6 +537,17 @@ public:
       off += chunk;
     }
     return true;
+  }
+
+  bool WasResumed() override
+  {
+    SecPkgContext_SessionInfo info;
+    memset(&info, 0, sizeof(info));
+    if (QueryContextAttributes(&ctxt_, SECPKG_ATTR_SESSION_INFO, &info) !=
+        SEC_E_OK) {
+      return false;
+    }
+    return (info.dwFlags & SSL_SESSION_RECONNECT) != 0;
   }
 
 private:

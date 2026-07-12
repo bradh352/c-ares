@@ -71,6 +71,10 @@ public:
   /* Encrypt application plaintext; the ciphertext becomes available via
    * DrainCipher(). */
   virtual bool WritePlain(const unsigned char *data, size_t len) = 0;
+
+  /* Whether this connection's handshake resumed a prior TLS session (rather
+   * than performing a full handshake).  Only meaningful once established. */
+  virtual bool WasResumed() = 0;
 };
 
 class TlsServerCtx {
