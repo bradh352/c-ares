@@ -52,10 +52,8 @@ follow-up PRs for the rest.
   TLS 1.3 0-RTT early data (confirmed via Microsoft's MsQuic docs), so
   0-RTT remains OpenSSL-only; this asymmetry is documented.  Also proves
   the crypto abstraction against a second implementation.
-- Remaining before the PR is final: the outstanding items in the Phase 1
-  subsections (the Schannel backend, a few connection/timeout/EDNS items,
-  the all-event-backend test sweep, live tests, macOS crypto CI leg, and
-  adig/man-page docs).
+- Remaining before the PR is final: the all-event-backend test sweep and
+  live tests.  (EDNS padding is an explicit deferred nice-to-have.)
 
 **Follow-up PRs (after Phase 1):**
 - **Server security grouping** — secure servers preferred; no silent
@@ -417,13 +415,16 @@ with a TLS scheme.
       close of an established TLS connection (preserves the session for
       resumption), `ares_tlsimp_destroy()` in the cleanup path and the
       open-connection error path.
-- [ ] **Timeout behavior**: handshake counts against query timeout;
-      confirm a stalled handshake trips the existing timeout/retry
-      machinery and marks the connection failed rather than hanging.
-- [ ] **EDNS considerations for DoT** (nice-to-have, may defer):
-      padding (RFC 7830 / policy RFC 8467) and edns-tcp-keepalive
-      (RFC 7828) to hold connections open — c-ares already has an
-      idle-connection concept for TCP to piggyback on.
+- [x] **Timeout behavior**: a stalled handshake trips the existing
+      timeout/retry machinery and the query fails rather than hanging —
+      confirmed end to end by `MockDoTServerTest.HandshakeStallTimeout`
+      (server accepts but never answers the ClientHello) and
+      `MidHandshakeClose` (server drops the connection mid-handshake).
+- [ ] **EDNS considerations for DoT** — *deferred to a follow-up* (explicit
+      nice-to-have): padding (RFC 7830 / policy RFC 8467) and
+      edns-tcp-keepalive (RFC 7828) to hold connections open.  Not required
+      for functional DoT; c-ares already has an idle-connection concept for
+      TCP to piggyback on when this is picked up.
 
 ### Verification modes (done in Phase 1)
 
