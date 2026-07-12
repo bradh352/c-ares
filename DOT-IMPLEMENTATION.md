@@ -47,10 +47,14 @@ follow-up PRs for the rest.
 - Performance: TLS 1.3 Early Data (0-RTT) + TCP Fast Open — warm queries
   cost no extra round trips.
 - Full-stack tests + crypto CI legs (Linux/ASAN, MSVC+OpenSSL, MSYS2).
+- **Windows Schannel backend** — a second, native, dependency-free TLS
+  backend so Windows does DoT without OpenSSL; 0-RTT is a goal but may not
+  be reachable via Schannel (ship without it if so).  Also proves the
+  crypto abstraction against a second implementation.
 - Remaining before the PR is final: the outstanding items in the Phase 1
-  subsections (a few connection/timeout/EDNS items, the all-event-backend
-  test sweep, live tests, macOS crypto CI leg, adig/man-page docs, and the
-  custom-CA / mTLS config surface).
+  subsections (the Schannel backend, a few connection/timeout/EDNS items,
+  the all-event-backend test sweep, live tests, macOS crypto CI leg,
+  adig/man-page docs, and the custom-CA config surface).
 
 **Follow-up PRs (after Phase 1):**
 - **Server security grouping** — secure servers preferred; no silent
@@ -63,13 +67,15 @@ follow-up PRs for the rest.
   (Android Private DNS, systemd-resolved read directly, macOS/iOS, …);
   research complete, findings in the OS DoT config section below.  Includes
   DDR (RFC 9462) / DNR (RFC 9463) standards-track auto-discovery.
-- **Additional crypto backends** — Schannel (dependency-free Windows) and
-  others; abstraction already exists.
+- **Client certificates (mTLS)** — authenticate c-ares to the resolver;
+  moved out of Phase 1 because the client-key config surface is harder.
+- **Additional crypto backends** — Apple / wolfSSL / rustls / mbedTLS;
+  abstraction already exists.  (Schannel moved into Phase 1.)
 - **Overlaps** — #642 domain-specific servers shares the server-grouping
   machinery; #882 URI schemes are the config representation.
 
-Note: some Phase 1 config/test items (custom CA, mTLS, live tests, etc.)
-could slip to a follow-up PR if the first PR is getting large — decide when
+Note: some Phase 1 config/test items (custom CA, live tests, etc.) could
+slip to a follow-up PR if the first PR is getting large — decide when
 sizing it.
 
 ## Current state (what exists on this branch)
@@ -335,9 +341,13 @@ with a TLS scheme.
 - [x] Public API surface beyond CSV: **none** required (options struct
       untouched -> no ABI concern).  A channel-level "opportunistic TLS for
       all servers" knob can come later.
-- [ ] `adig -s dns+tls://...` works for free via CSV parsing (untested
-      end-to-end against a live DoT server); add a note to adig docs.
-- [ ] Docs: `ares_set_servers_csv.3` scheme table; `FEATURES.md` entry.
+- [x] `adig -s dns+tls://...` works.  Verified end-to-end against real
+      Cloudflare DoT: `adig -s
+      'dns+tls://1.1.1.1?hostname=one.one.one.one' example.com` returns a
+      correct NOERROR answer over the encrypted channel.  (adig doc note
+      still to add.)
+- [ ] Docs: `ares_set_servers_csv.3` scheme table; adig `dns+tls://` note;
+      `FEATURES.md` entry.
 
 ### Connection integration
 
@@ -403,24 +413,72 @@ with a TLS scheme.
       (RFC 7828) to hold connections open — c-ares already has an
       idle-connection concept for TCP to piggyback on.
 
-### Configuration flexibility (custom CA, client certs / mTLS, hostname)
-
-Captured from issue #818 intent and a concrete user request (mTLS to a
-private DoT resolver):
+### Configuration flexibility (custom CA, hostname)
 
 - [ ] **Custom CA certificate(s)** for validating the resolver, instead of
       (or in addition to) the system trust store.  The internal
       `ares_tls_set_cadata()` already exists; needs a public config surface
-      (URI query key like `cafile=`/`cadata=`, and/or an option).
-- [ ] **Client certificates (mTLS)** to authenticate c-ares to the
-      upstream resolver — requested in #818.  Needs cert+key config plumbed
-      into the backend (`SSL_CTX_use_certificate`/`_PrivateKey` on the
-      client side) and a config surface.
+      (URI query key like `cafile=`/`cadata=`, and/or an option).  Decide
+      the surface (URI query key vs. new `ares_set_*` API vs. options
+      struct) and any ABI implications.
 - (Done in Phase 1) **Skip / relax hostname validation** via
   `verify=opportunistic` (encrypt without verification).  A
   verify-chain-but-not-name middle mode could still be added if needed.
-- [ ] Decide the config surface for the above (URI query keys vs. new
-      `ares_set_*` API vs. options struct) and the ABI implications.
+
+Client certificates (mTLS) were **moved to a follow-up PR** — the config
+surface for client key material is harder and shouldn't gate Phase 1.  See
+"Client certificates (mTLS)" under Phase 2.
+
+### Windows Schannel backend (native, dependency-free)
+
+Windows DoT already works in Phase 1 via the OpenSSL backend (MSVC+OpenSSL
+CI leg is green).  This adds a **second, native backend** so Windows can do
+DoT with no external dependency — the platform where shipping OpenSSL is
+hardest.  Including it in Phase 1 also validates the `ares_cryptoimp_*` /
+`ares_tlsimp_*` abstraction against a second implementation (a one-backend
+abstraction is unproven) while the seam is fresh.
+
+Implements the same provider interface as the OpenSSL backend, driven by
+Windows SSPI/Schannel (`AcquireCredentialsHandle`,
+`InitializeSecurityContext`, `EncryptMessage`/`DecryptMessage`).  Because
+c-ares owns the socket (apps may swap it via
+`ares_set_socket_functions()`), Schannel must run in **buffer-in /
+buffer-out** mode — we feed it TLS records and pump ciphertext through the
+existing `ares_conn_read/write_raw()` paths, exactly like the OpenSSL BIO
+bridge.  No delegation of network I/O to the OS.
+
+- [ ] **Handshake + records** — `InitializeSecurityContext` loop producing
+      the buffer-in/buffer-out token exchange; `EncryptMessage` /
+      `DecryptMessage` for app data.  Map SSPI want-more-input /
+      want-more-output to the same want-read/want-write flags the
+      connection layer already interprets.
+- [ ] **TLS 1.3** — the common SSPI examples are TLS 1.2-era.  1.3 needs
+      correct handling of `SEC_I_RENEGOTIATE` returned by `DecryptMessage`
+      (post-handshake tickets / key update arrive as "renegotiate" and must
+      be fed back through `InitializeSecurityContext`, *not* treated as a
+      real renegotiation).  Requires a recent enough Windows SDK / OS.
+- [ ] **Certificate verification** — validate the server chain against the
+      Windows cert store (`CertGetCertificateChain` /
+      `CertVerifyCertificateChainPolicy` with `SSL_EXTRA` /
+      `CERT_CHAIN_POLICY_SSL`), plus hostname/SNI.  Custom-CA config surface
+      maps to an in-memory `HCERTSTORE`.  Honor the same
+      default/strict/opportunistic `verify` modes.
+- [ ] **Session resumption** — Schannel caches credentials/sessions itself;
+      confirm resumption works across our short-lived connections and that
+      our credential-handle lifetime doesn't defeat it.
+- [ ] **0-RTT early data (goal, not a gate)** — investigate whether
+      Schannel exposes TLS 1.3 early data at all.  If a mechanism exists,
+      wire it to the same `ares_tlsimp_earlydata_write/accepted()` surface
+      the connection layer already drives.  **If Schannel has no early-data
+      API, ship Schannel without 0-RTT** and document the asymmetry
+      (0-RTT on OpenSSL platforms only); do not let this block Phase 1.
+- [ ] **Build wiring** — select the backend at configure time
+      (CMake `CARES_CRYPTO`/auto-detect, autotools equivalent); link
+      `secur32`/`crypt32`.  Decide OpenSSL-vs-Schannel default on Windows
+      (likely Schannel when both are available, to be dependency-free).
+- [ ] **CI** — add a Windows Schannel leg (no OpenSSL) so the native path
+      is built and the DoT tests run against it, alongside the existing
+      MSVC+OpenSSL leg.
 
 ### Testing (full-stack)
 
@@ -564,6 +622,21 @@ validation), never to answer user queries.
   hostname-only entries) and with #642 domain-specific servers, so this
   lands alongside that work rather than standalone.
 
+### Client certificates (mTLS)
+
+Authenticate c-ares *to* the upstream resolver with a client certificate
+(a concrete request in #818: a private DoT server doing mTLS).  Moved out
+of Phase 1 because the config surface is the hard part.
+
+- [ ] Backend plumbing: `SSL_CTX_use_certificate` / `SSL_CTX_use_PrivateKey`
+      (or per-connection `SSL_use_*`) on the client side, via a new
+      `ares_tlsimp_set_client_cert()` mirroring `ares_tlsimp_set_cadata()`.
+- [ ] Config surface for the cert + private key: file paths vs. inline PEM,
+      where key material lives, encrypted-key handling, and how it maps onto
+      the `dns+tls://` URI (per-server) vs. a channel-wide setting.  Key
+      material is sensitive, so this needs a deliberate design.
+- [ ] Tests against a mock DoT server configured to require a client cert.
+
 ## Open questions / decisions to make
 
 - Unix CA-root discovery should probably try
@@ -592,15 +665,11 @@ validation), never to answer user queries.
 ## Additional crypto backends
 
 The provider abstraction (`ares_cryptoimp_*` / `ares_tlsimp_*`) was built
-to make backends pluggable.  OpenSSL >= 3 is the only one implemented.
-Others, with the challenges the maintainer documented in #818:
+to make backends pluggable.  OpenSSL >= 3 is implemented; **Windows
+Schannel is being added in Phase 1** (see the Phase 1 "Windows Schannel
+backend" subsection).  Remaining candidates, with the challenges the
+maintainer documented in #818:
 
-- **Windows SChannel** — removes the OpenSSL dependency on the platform
-  where shipping it is hardest.  Challenges: the common SSPI/Schannel
-  examples don't cover TLS 1.3; TLS 1.3 needs correct handling of
-  `SEC_I_RENEGOTIATE` in `DecryptMessage`; and it is **not clear how to
-  send TLS early data (0-RTT)** via Schannel, so 0-RTT may be
-  OpenSSL-only.  Refs in the issue.
 - **Apple** — SecureTransport is legacy and TLS 1.2-only (unusable for a
   1.3-era feature).  The modern Network.framework doesn't expose a
   buffer-in/buffer-out TLS primitive: because c-ares lets the app swap the
@@ -611,9 +680,9 @@ Others, with the challenges the maintainer documented in #818:
 - **wolfSSL / rustls-ffi / mbedTLS** — plausible additional backends for
   embedded / small-footprint or memory-safe deployments; not scoped yet.
 
-Priority: the abstraction exists, so a second backend is additive and
-non-urgent.  Schannel is the highest-value target (dependency-free
-Windows) if/when someone takes the TLS 1.3 + 0-RTT investigation.
+Priority: the abstraction exists, so these are additive and non-urgent.
+Schannel (the highest-value target, dependency-free Windows) has been
+pulled into Phase 1; the rest remain unscoped.
 
 ## OS DoT configuration sources
 
@@ -1061,6 +1130,15 @@ a DoT server that c-ares then reads via Tier 1.
 
 Newest first.
 
+- 2026-07-12: adig verified end to end against real Cloudflare DoT
+  (`adig -s 'dns+tls://1.1.1.1?hostname=one.one.one.one' example.com`).
+  Client certificates (mTLS) moved out of Phase 1 into a Phase 2 subsection
+  (the client-key config surface is the hard part and shouldn't gate the
+  first PR).  Windows Schannel backend pulled **into** Phase 1 as a second,
+  native, dependency-free TLS backend (also validates the crypto
+  abstraction against a second implementation); 0-RTT via Schannel is a
+  goal but not a gate — ship without it and document the asymmetry if
+  Schannel exposes no early-data API.
 - 2026-07-12: restructured around delivery: Phase 1 is a single PR
   (backend + connection + `dns+tls://` config + full-stack tests), so the
   former "Phase 3 — Testing" section was folded into Phase 1 as a
