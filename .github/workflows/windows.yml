@@ -32,7 +32,11 @@ jobs:
           # Crypto (DoT) build against OpenSSL; the TLS test harness is
           # POSIX-only so this validates MSVC compile/link of the crypto
           # backend plus the full non-TLS suite under the crypto build.
-          - { name: "MSVC x64 (CMake+OpenSSL)", arch: x64, conftool: CMAKE, crypto: yes, cmake_extra: '-DCARES_CRYPTO=ON -DOPENSSL_ROOT_DIR="C:\Program Files\OpenSSL"' }
+          - { name: "MSVC x64 (CMake+OpenSSL)", arch: x64, conftool: CMAKE, crypto: yes, cmake_extra: '-DCARES_CRYPTO=ON -DCARES_CRYPTO_BACKEND=openssl -DOPENSSL_ROOT_DIR="C:\Program Files\OpenSSL"' }
+          # Crypto (DoT) build against the native Schannel backend (no external
+          # dependency).  Validates MSVC compile/link of the Schannel backend
+          # plus the full non-TLS suite; the TLS harness is POSIX-only.
+          - { name: "MSVC x64 (CMake+Schannel)", arch: x64, conftool: CMAKE, cmake_extra: '-DCARES_CRYPTO=ON -DCARES_CRYPTO_BACKEND=schannel' }
     name: ${{ matrix.name }}
     steps:
       - name: Setup MSVC environment (${{ matrix.arch }})

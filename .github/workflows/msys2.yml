@@ -65,7 +65,11 @@ jobs:
       - name: "CMake: (crypto/DoT) build and test c-ares"
         env:
           BUILD_TYPE: CMAKE
-          CMAKE_FLAGS: "-DCARES_WERROR=ON -DCMAKE_BUILD_TYPE=DEBUG -DCARES_STATIC=ON -DCMAKE_INSTALL_PREFIX=C:/projects/build-cares/test_install -DCARES_STATIC_PIC=ON -DCARES_CRYPTO=ON -G Ninja"
+          # Pin to OpenSSL: on Windows the crypto backend auto-selects Schannel,
+          # but this leg (with the mingw OpenSSL package installed) exercises the
+          # OpenSSL backend under GCC/Clang.  Schannel is validated by the MSVC
+          # workflow.
+          CMAKE_FLAGS: "-DCARES_WERROR=ON -DCMAKE_BUILD_TYPE=DEBUG -DCARES_STATIC=ON -DCMAKE_INSTALL_PREFIX=C:/projects/build-cares/test_install -DCARES_STATIC_PIC=ON -DCARES_CRYPTO=ON -DCARES_CRYPTO_BACKEND=openssl -G Ninja"
           CMAKE_TEST_FLAGS: "-DCARES_BUILD_TESTS=ON"
           TEST_DEBUGGER: ${{ ( matrix.msystem == 'CLANG32' || matrix.msystem == 'CLANG64' ) && 'lldb' || 'gdb' }}
         run: |

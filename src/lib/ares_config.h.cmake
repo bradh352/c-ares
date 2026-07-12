@@ -512,3 +512,6 @@
 /* Define to 1 if using OpenSSL as the crypto backend */
 #cmakedefine CARES_CRYPTO_OPENSSL 1
 
+/* Define to 1 if using Windows Schannel as the crypto backend */
+#cmakedefine CARES_CRYPTO_SCHANNEL 1
+

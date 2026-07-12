@@ -46,6 +46,7 @@ CSOURCES = ares_addrinfo2hostent.c	\
   crypto/ares_crypto.c			\
   crypto/ares_crypto_stubs.c		\
   crypto/ares_openssl.c			\
+  crypto/ares_schannel.c		\
   dsa/ares_array.c			\
   dsa/ares_htable.c			\
   dsa/ares_htable_asvp.c		\

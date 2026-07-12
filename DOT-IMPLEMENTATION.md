@@ -48,9 +48,10 @@ follow-up PRs for the rest.
   cost no extra round trips.
 - Full-stack tests + crypto CI legs (Linux/ASAN, MSVC+OpenSSL, MSYS2).
 - **Windows Schannel backend** — a second, native, dependency-free TLS
-  backend so Windows does DoT without OpenSSL; 0-RTT is a goal but may not
-  be reachable via Schannel (ship without it if so).  Also proves the
-  crypto abstraction against a second implementation.
+  backend so Windows does DoT without OpenSSL.  Schannel does not support
+  TLS 1.3 0-RTT early data (confirmed via Microsoft's MsQuic docs), so
+  0-RTT remains OpenSSL-only; this asymmetry is documented.  Also proves
+  the crypto abstraction against a second implementation.
 - Remaining before the PR is final: the outstanding items in the Phase 1
   subsections (the Schannel backend, a few connection/timeout/EDNS items,
   the all-event-backend test sweep, live tests, macOS crypto CI leg,
@@ -347,7 +348,10 @@ with a TLS scheme.
       correct NOERROR answer over the encrypted channel.  (adig doc note
       still to add.)
 - [ ] Docs: `ares_set_servers_csv.3` scheme table; adig `dns+tls://` note;
-      `FEATURES.md` entry.
+      `FEATURES.md` entry.  Include a **crypto-backend note**: OpenSSL vs.
+      Schannel selection (`CARES_CRYPTO_BACKEND`, auto-selects Schannel on
+      Windows), and that **TLS 1.3 0-RTT early data is available only with
+      the OpenSSL backend** — Schannel does not support it.
 
 ### Connection integration
 
@@ -466,12 +470,15 @@ bridge.  No delegation of network I/O to the OS.
 - [ ] **Session resumption** — Schannel caches credentials/sessions itself;
       confirm resumption works across our short-lived connections and that
       our credential-handle lifetime doesn't defeat it.
-- [ ] **0-RTT early data (goal, not a gate)** — investigate whether
-      Schannel exposes TLS 1.3 early data at all.  If a mechanism exists,
-      wire it to the same `ares_tlsimp_earlydata_write/accepted()` surface
-      the connection layer already drives.  **If Schannel has no early-data
-      API, ship Schannel without 0-RTT** and document the asymmetry
-      (0-RTT on OpenSSL platforms only); do not let this block Phase 1.
+- [x] **0-RTT early data — not supported by Schannel (confirmed).**
+      Schannel exposes no client-side TLS 1.3 early-data write primitive;
+      Microsoft's own MsQuic documentation calls this out and directs
+      callers needing 0-RTT to OpenSSL.  The backend therefore reports an
+      early-data size of 0, which makes the connection layer skip early
+      data and perform an ordinary 1-RTT handshake (see
+      `ares_conn_write()` and the OpenSSL-vs-Schannel feature note).
+      **This asymmetry (0-RTT on OpenSSL platforms only) must be documented
+      in the user-facing docs** — see the Phase 1 Docs item.
 - [ ] **Build wiring** — select the backend at configure time
       (CMake `CARES_CRYPTO`/auto-detect, autotools equivalent); link
       `secur32`/`crypt32`.  Decide OpenSSL-vs-Schannel default on Windows
@@ -1136,9 +1143,16 @@ Newest first.
   (the client-key config surface is the hard part and shouldn't gate the
   first PR).  Windows Schannel backend pulled **into** Phase 1 as a second,
   native, dependency-free TLS backend (also validates the crypto
-  abstraction against a second implementation); 0-RTT via Schannel is a
-  goal but not a gate — ship without it and document the asymmetry if
-  Schannel exposes no early-data API.
+  abstraction against a second implementation).  0-RTT via Schannel is
+  confirmed unsupported (Microsoft's MsQuic docs direct 0-RTT users to
+  OpenSSL), so 0-RTT stays OpenSSL-only and the asymmetry is documented;
+  the backend reports early-data size 0 and falls back to a 1-RTT
+  handshake.  Initial Schannel backend implemented (SSPI buffer-in/
+  buffer-out handshake, encrypt/decrypt, manual chain+name verification,
+  custom-CA store, post-handshake SEC_I_RENEGOTIATE handling), with CMake/
+  autotools backend selection (CARES_CRYPTO_BACKEND, auto=Schannel on
+  Windows) and an MSVC Schannel CI leg.  Copyright year on all new
+  branch files bumped to 2026.
 - 2026-07-12: restructured around delivery: Phase 1 is a single PR
   (backend + connection + `dns+tls://` config + full-stack tests), so the
   former "Phase 3 — Testing" section was folded into Phase 1 as a
